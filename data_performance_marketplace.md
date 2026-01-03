@@ -1,26 +1,34 @@
 # Data Performance Marketplace – Design & Governance Guide
 
 This document outlines the concept and design requirements for a **data
-performance marketplace** within the PAT ecosystem.  The marketplace will
-enable data providers to monetize high‑quality datasets and data consumers to
-discover, evaluate and purchase data, using the PAT token as the medium of
-exchange.  Building a trustworthy marketplace requires clear roles,
-robust governance and mechanisms to evaluate and improve data quality.
+performance marketplace** within the PAT ecosystem.  The marketplace enables
+data providers to monetize high‑quality datasets and data consumers to
+discover, evaluate and purchase data using PAT tokens on **zkSync Era**.
+
+## Technical Specifications
+
+| Component | Technology |
+|-----------|------------|
+| **Settlement** | zkSync Era (PAT token) |
+| **Data Storage** | Centralized cloud |
+| **Data Type** | Web browsing intent signals |
+| **Data Source** | Qwen‑powered AI browser agent |
+| **Jurisdiction** | Wyoming DAO LLC |
 
 ## 1. Overview
 
 Databricks describes a data marketplace as an online store that connects
 data providers and consumers, offering participants the ability to buy and
 sell data and related services in a secure environment with high‑quality,
-consistent assets【648904987759341†L170-L179】.  These platforms provide
+consistent assets.  These platforms provide
 infrastructure for data exchange while protecting privacy and security,
-allowing users to research, sample, compare and purchase datasets【648904987759341†L246-L251】.
+allowing users to research, sample, compare and purchase datasets.
 
 ### Marketplace vs. Data Exchange
 
 A **public data marketplace** is open to many providers and consumers, whereas a
 **data exchange** supports private sharing between a single provider and a few
-recipients【648904987759341†L225-L233】.  The PAT marketplace will operate as a
+recipients.  The PAT marketplace will operate as a
 public platform with proper access control and reputation systems.
 
 ## 2. Participants & Roles
@@ -28,10 +36,10 @@ public platform with proper access control and reputation systems.
 Within a data marketplace, two primary roles exist:
 
 - **Data providers** – Organizations or individuals who offer datasets or
-  data services.  Providers aim to monetize their assets【648904987759341†L236-L239】.
+  data services.  Providers aim to monetize their assets.
 - **Data consumers** – Users who purchase data to extract insights or
   enhance their own products.  Examples include analysts acquiring
-  weather data for demand forecasting【648904987759341†L239-L244】.
+  weather data for demand forecasting.
 
 The marketplace should support multiple providers and consumers and include
 mechanisms to verify identities and reputations.
@@ -46,14 +54,14 @@ To build a successful marketplace, consider these core features:
    smart contracts to automate purchases.
 2. **Data discovery & preview** – Provide search, filtering and preview
    capabilities so consumers can explore dataset schemas and sample data
-   without downloading the entire dataset【648904987759341†L246-L251】.
+   without downloading the entire dataset.
 3. **Transparent pricing & licensing** – Allow providers to set prices and
    specify licensing terms (e.g. one‑time purchase, subscription, usage‑based).
 4. **Quality metrics & rating system** – Display metrics such as accuracy,
    completeness, timeliness and reliability.  Allow consumers to rate and
    review datasets, which encourages providers to maintain high standards.  Atlan
    notes that many marketplaces include mechanisms for rating data products to
-   provide additional information to buyers【882273596000115†L914-L1024】.
+   provide additional information to buyers.
 5. **Transaction management** – Implement smart contracts or backend systems
    to handle purchases, refunds and royalty distributions.  Maintain an audit
    trail for compliance.
@@ -68,22 +76,22 @@ To build a successful marketplace, consider these core features:
 ## 4. Data Quality & Governance
 
 Ensuring data quality and governance is critical.  Atlan proposes a
-step‑by‑step process for evaluating data before purchase【882273596000115†L914-L1024】:
+step‑by‑step process for evaluating data before purchase:
 
 1. **Understand your data needs** – Define the problem you want to solve
-   and what type of data is required【882273596000115†L933-L943】.
+   and what type of data is required.
 2. **Choose reputable marketplaces** – Research the platform’s vetting process
-   and dispute mechanisms【882273596000115†L946-L952】.
-3. **Evaluate the data provider** – Check the provider’s history and ratings【882273596000115†L957-L963】.
+   and dispute mechanisms.
+3. **Evaluate the data provider** – Check the provider's history and ratings.
 4. **Check provenance & compliance** – Verify that data was collected
-   ethically and complies with regulations (e.g. GDPR)【882273596000115†L967-L976】.
+   ethically and complies with regulations (e.g. GDPR).
 5. **Assess data quality** – Examine accuracy, completeness, consistency
-   and timeliness【882273596000115†L978-L987】.
+   and timeliness.
 6. **Implement governance** – Once acquired, define processes to maintain
-   quality, security and privacy【882273596000115†L989-L997】.
-7. **Verify & validate** – Cross‑check the data against reliable sources【882273596000115†L999-L1007】.
+   quality, security and privacy.
+7. **Verify & validate** – Cross‑check the data against reliable sources.
 8. **Monitor & update** – Continuously monitor performance and update data if
-   it becomes outdated【882273596000115†L1010-L1016】.
+   it becomes outdated.
 
 The PAT marketplace should embed these steps into its workflow.  For example,
 the platform can require providers to submit provenance details and automate
@@ -111,21 +119,23 @@ performance thresholds.
 
 ## 6. Platform Architecture
 
-A high‑level architecture for the PAT marketplace may include:
+The PAT marketplace architecture:
 
 1. **Frontend** – Web interface for browsing, searching and purchasing
-   datasets.  Provide dashboards for providers and consumers.
-2. **Backend & API** – Microservices or serverless functions to handle
-   authentication, listing management, payments (using PAT token), rating and
-   quality evaluation.  Provide REST or GraphQL APIs.
-3. **Metadata & catalog store** – Database to store dataset metadata, quality
-   metrics, provenance information and user reviews.
-4. **Storage layer** – Secure storage for dataset files.  Could integrate
-   decentralized storage (e.g. IPFS) or cloud storage with encryption.
-5. **Smart contracts** – Optional contracts on Ethereum to manage payments
-   and enforce licensing terms.
-6. **Integration with AI browser** – API endpoints that allow the AI browser
-   agent to ingest dataset metadata and provide previews to users.
+   data segments.  Dashboards for providers and consumers.
+2. **Backend & API** – Microservices handling authentication, listing
+   management, PAT payments via zkSync Era, rating and quality evaluation.
+   REST APIs for external integrations.
+3. **Metadata & catalog store** – PostgreSQL database storing segment metadata,
+   quality metrics, provenance and user reviews.
+4. **Storage layer** – **Centralized cloud storage** (AWS S3 / GCP Cloud Storage)
+   with encryption at rest.  Segments are stored off‑chain; only pricing and
+   settlement occur on zkSync Era.
+5. **Smart contracts (zkSync Era)** – PAT token contract, segment registry,
+   payment escrow and market maker collateral management.
+6. **AI browser integration** – The Qwen‑powered browser agent pushes new
+   intent signal segments via API.  Segments are validated, scored and listed
+   automatically.
 
 ## 7. Market Maker Model for Data Segments
 
