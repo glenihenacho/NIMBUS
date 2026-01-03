@@ -1,0 +1,45 @@
+# PAT Browser Build Configuration
+
+import("//build/config/features.gni")
+
+# PAT Browser data collection and analysis components
+source_set("pat_browser") {
+  sources = [
+    "src/collector/browsing_data_collector.cc",
+    "src/collector/browsing_data_collector.h",
+    "src/collector/event_types.h",
+    "src/collector/privacy_filter.cc",
+    "src/collector/privacy_filter.h",
+    "src/qwen/intent_analyzer.cc",
+    "src/qwen/intent_analyzer.h",
+    "src/qwen/qwen_client.cc",
+    "src/qwen/qwen_client.h",
+    "src/storage/encrypted_store.cc",
+    "src/storage/encrypted_store.h",
+  ]
+
+  deps = [
+    "//base",
+    "//content/public/browser",
+    "//crypto",
+    "//url",
+  ]
+
+  # Enable PAT features
+  defines = [ "PAT_BROWSER_ENABLED" ]
+}
+
+# PAT Browser tests
+test("pat_browser_unittests") {
+  sources = [
+    "tests/browsing_data_collector_unittest.cc",
+    "tests/intent_analyzer_unittest.cc",
+    "tests/privacy_filter_unittest.cc",
+  ]
+
+  deps = [
+    ":pat_browser",
+    "//base/test:test_support",
+    "//testing/gtest",
+  ]
+}

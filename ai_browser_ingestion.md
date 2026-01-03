@@ -1,131 +1,413 @@
-# AI Browser for Data Ingestion – Architecture & Implementation Guide
+# PAT Browser – Chromium Fork for Data Monetization
 
-This document describes the design and implementation of an **AI browser
-agent** powered by **Qwen** capable of autonomously browsing the web,
-interacting with pages and ingesting **web browsing intent signals**.  The goal
-is to build a modular agent that creates data segments for the PAT marketplace.
+This document describes the design and implementation of **PAT Browser**, a
+Chromium-based web browser that enables users to monetize their browsing data
+through the PAT marketplace. The browser passively ingests browsing behavior,
+uses Qwen AI to identify intent signals, and creates tradeable data segments.
 
 ## Technical Specifications
 
 | Component | Technology |
 |-----------|------------|
-| **LLM** | Qwen (Alibaba) |
-| **Data Type** | Web browsing intent signals |
-| **Browser Automation** | Playwright |
-| **Output** | Data segments for PAT marketplace |
-| **Storage** | Centralized cloud |
+| **Base** | Chromium (fork) |
+| **AI Engine** | Qwen (Alibaba) |
+| **Data Collected** | URLs, time on page, scroll depth, clicks, search queries, form inputs |
+| **Privacy** | Incognito mode excludes all data collection |
+| **Output** | Intent signal data segments |
+| **Settlement** | PAT tokens on zkSync Era |
 
 ## 1. Concept & Motivation
 
-Traditional web browsers act as passive windows into the internet.  AI browser
-agents transform them into proactive, goal‑driven assistants.  According to
-LayerX, these agents integrate large language models (LLMs) directly into the
-browser so that user commands expressed in natural language are interpreted
-and broken down into sequences of web tasks.  The
-agent then autonomously navigates websites, interacts with forms and extracts
-data, mimicking human‑like browsing behaviour.
-This capability makes AI browser agents powerful tools for automating data
-collection, research and workflows.
+Users generate valuable browsing data every day but receive nothing in return.
+Advertisers and data brokers profit from this data while users bear the privacy
+costs. PAT Browser flips this model:
+
+- **User owns their data** – All browsing data stays local until the user
+  explicitly chooses to monetize it.
+- **Transparent collection** – Users see exactly what data is collected and can
+  opt out per-site or globally.
+- **Fair compensation** – Users earn PAT tokens when their data segments are
+  purchased on the marketplace.
+- **Privacy by default** – Incognito mode disables all data collection.
 
 ## 2. Architecture Overview
 
-At a high level, the PAT AI browser agent consists of:
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            PAT Browser (Chromium Fork)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │   Chromium  │  │    Data     │  │    Qwen     │  │    PAT Wallet &     │ │
+│  │   Renderer  │──│  Collector  │──│  Analyzer   │──│  Marketplace Client │ │
+│  │             │  │             │  │             │  │                     │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+│         │               │               │                     │             │
+│         ▼               ▼               ▼                     ▼             │
+│  ┌─────────────────────────────────────────────────────────────────────────┐│
+│  │                        Local Encrypted Storage                          ││
+│  │  (Browsing data, intent signals, segments awaiting upload)              ││
+│  └─────────────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+                    ┌─────────────────────────────────┐
+                    │      PAT Marketplace API        │
+                    │      (zkSync Era Settlement)    │
+                    └─────────────────────────────────┘
+```
 
-1. **Brain (Qwen LLM)** – The Qwen large language model interprets high‑level
-   goals and plans a sequence of actions.  It converts natural language commands
-   into structured tasks and identifies web browsing intent signals.
-2. **Perception module** – Code that parses web pages (HTML, JSON) and
-   identifies relevant elements such as buttons, forms and data tables.
-3. **Action module** – Functions that perform browser actions (clicking,
-   typing, scrolling) to navigate pages and interact with UI elements.
-4. **Decision logic** – The control loop that selects the next action based on
-   the agent’s goal and current page state.  Different agent types (simple
-   reflex, model‑based, goal‑based, utility‑based or learning) vary in how they
-   implement this logic.
+### Core Components
 
-The workflow begins with the user defining a goal.  The LLM breaks this goal
-into sub‑tasks.  The perception module reads the current page to determine
-available actions, and the decision logic chooses the appropriate action.  The
-action module executes the action and the cycle repeats until the goal is
-achieved.
+1. **Chromium Renderer** – Standard Chromium rendering engine with hooks for
+   data collection events.
 
-### Agent Types
+2. **Data Collector** – Native C++ component that captures browsing events:
+   - Page navigation (URL, timestamp, referrer)
+   - Time on page and engagement metrics
+   - Scroll depth and viewport interactions
+   - Click events (anonymized element selectors)
+   - Search queries (from search engine URLs)
+   - Form inputs (sanitized, no passwords/PII)
 
-LayerX identifies several categories of AI agents:
+3. **Qwen Analyzer** – Local or API-based Qwen inference that processes raw
+   browsing data into intent signals:
+   - Purchase intent (product pages, cart additions, price comparisons)
+   - Research intent (articles, guides, documentation)
+   - Comparison intent (review sites, "vs" searches)
+   - Engagement intent (social interactions, comments)
 
-- **Simple reflex agents** – React to patterns with hard‑coded rules; useful
-  for trivial tasks like auto‑accepting cookie banners.
-- **Model‑based agents** – Maintain an internal representation of the world
-  (e.g. remember items in a cart).
-- **Goal‑based agents** – Plan actions to achieve a specific goal, such as
-  booking a flight.
-- **Utility‑based agents** – Optimize a utility function (e.g. minimize cost or
-  maximize efficiency).
-- **Learning agents** – Adapt over time based on feedback, improving
-  performance.
-- **API‑enhanced hybrid agents** – Combine multiple approaches and leverage
-  external APIs for enhanced capabilities.
+4. **PAT Wallet & Marketplace Client** – Integrated wallet for:
+   - Managing PAT token balance
+   - Viewing pending/sold data segments
+   - Configuring monetization preferences
+   - Withdrawing earnings to external wallet
 
-For initial implementation, a **goal‑based agent** is suitable.  As the
-project matures, hybrid approaches can be adopted.
+## 3. Data Collection Specification
 
-## 3. Practical Development Steps
+### Collected Data Points
 
-LayerX suggests the following process for building an AI browser agent:
+| Data Type | Description | Storage |
+|-----------|-------------|---------|
+| **URLs** | Full URL of visited pages | Local, hashed for segments |
+| **Time on Page** | Duration in seconds | Local |
+| **Scroll Depth** | Maximum scroll percentage | Local |
+| **Clicks** | Anonymized element type + position | Local |
+| **Search Queries** | Extracted from search engine URLs | Local |
+| **Form Inputs** | Field types only, no values (except search) | Local |
+| **Referrer Chain** | How user arrived at page | Local |
+| **Timestamps** | UTC timestamps for all events | Local |
 
-1. **Define the agent's purpose and scope** – The PAT agent collects **web
-   browsing intent signals** — user behavior patterns that indicate purchase
-   intent, research interests or engagement signals.
-2. **Design the agent's architecture** – Use a goal‑based agent with Qwen as
-   the reasoning engine and Playwright for browser automation.
-3. **Choose the right models and tools** – PAT uses **Qwen** (Alibaba's LLM)
-   for reasoning and **Playwright** for headless browser automation.  Qwen
-   provides strong multilingual capabilities and efficient inference.
-4. **Develop the perception and action modules** – Write code to parse web
-   pages (e.g. using BeautifulSoup or DOM APIs) and interact with them
-   programmatically.  In the PAT ecosystem, you could leverage the `browser`
-   and `computer` tools to perform these actions.
-5. **Train and test the agent** – Provide examples of tasks and validate that
-   the agent correctly executes them.  Use unit tests and simulated
-   environments to catch errors early.
-6. **Deployment and iteration** – Package the agent as a browser extension
-   or integrate it into the existing AI browser framework.  Collect feedback
-   from users, monitor performance and iterate.
+### Excluded Data (Never Collected)
 
-## 4. Security Considerations
+- Passwords and authentication tokens
+- Credit card numbers and financial data
+- Personal identifiable information (names, emails, addresses)
+- Private/Incognito browsing sessions
+- Sites on user's exclusion list
+- Healthcare and banking sites (default excluded)
 
-AI browser agents can access sensitive information and perform actions on a
-user’s behalf.  LayerX warns that compromised agents could exfiltrate data
-or execute malicious actions.  To mitigate these
-risks:
+### Privacy Controls
 
-1. **Sandboxing** – Run the agent in an isolated context with minimal
-   privileges and restrict access to sensitive data.
-2. **Prompt injection protection** – Implement filtering to detect and ignore
-   malicious instructions embedded in web pages or prompts.
-3. **Monitoring & logging** – Log all actions taken by the agent and monitor
-   for anomalies.  Provide users with transparency about what the agent is
-   doing.
-4. **Access control** – Require explicit user consent for actions that may
-   have side effects (e.g. purchases, sign‑ins) and implement multi‑factor
-   authentication where possible.
-5. **Continuous updates** – Regularly update the agent to address newly
-   discovered vulnerabilities and integrate security patches.
+```
+┌─────────────────────────────────────────────────────┐
+│              PAT Browser Privacy Settings            │
+├─────────────────────────────────────────────────────┤
+│ ☑ Enable data collection (earn PAT tokens)          │
+│ ☑ Exclude Incognito mode                            │
+│ ☑ Exclude banking/financial sites                   │
+│ ☑ Exclude healthcare sites                          │
+│ ☐ Exclude social media                              │
+│                                                      │
+│ Site-specific exclusions:                           │
+│   [example.com] [Remove]                            │
+│   [private-site.org] [Remove]                       │
+│   [+ Add site]                                       │
+│                                                      │
+│ [View My Data] [Export Data] [Delete All Data]      │
+└─────────────────────────────────────────────────────┘
+```
 
-## 5. Next Steps for Developers
+## 4. Intent Signal Detection
 
-1. **Prototype a minimal agent** – Use Python with **Playwright** and **Qwen**
-   to implement a goal‑based agent that can navigate webpages and extract
-   browsing intent signals.
-2. **Define segment schema** – Create a data model for intent signal segments
-   including type, time window, confidence score and metadata.
-3. **Integrate with PAT marketplace** – Connect the agent's output to the
-   data marketplace via REST APIs.  Segments are stored on centralized cloud
-   and priced/settled on zkSync Era.
-4. **Implement safety features** – Add prompt injection detection, request
-   confirmation for sensitive actions and comprehensive logging.
-5. **Iterate and expand** – Fine‑tune Qwen for intent signal detection and
-   explore learning capabilities to adapt to user behaviour.
+The Qwen AI engine processes raw browsing events to detect intent signals:
 
-See `contracts/` for the PAT token smart contract and `browser/` for the
-agent implementation.
+### Signal Types
+
+| Intent Type | Indicators | Confidence Factors |
+|-------------|------------|-------------------|
+| **PURCHASE_INTENT** | Product pages, cart, checkout, price comparisons | Time on page, return visits, click depth |
+| **RESEARCH_INTENT** | Articles, guides, documentation, tutorials | Scroll depth, time reading, bookmarks |
+| **COMPARISON_INTENT** | Review sites, "vs" searches, spec comparisons | Multiple product views, tab switches |
+| **ENGAGEMENT_INTENT** | Comments, shares, likes, form submissions | Interaction frequency, session length |
+| **NAVIGATION_INTENT** | Category browsing, search refinement | Click patterns, query modifications |
+
+### Segment Format
+
+```json
+{
+  "segment_id": "PURCHASE_INTENT|7D|0.75-0.90",
+  "segment_type": "PURCHASE_INTENT",
+  "time_window_days": 7,
+  "confidence_range": { "min": 0.75, "max": 0.90 },
+  "signal_count": 847,
+  "categories": ["electronics", "laptops"],
+  "created_at": "2024-01-15T10:30:00Z",
+  "user_id_hash": "0x7f3a...",
+  "price_pat": 150.00
+}
+```
+
+## 5. Building from Source
+
+### Prerequisites
+
+- Linux (Ubuntu 20.04+ recommended) or macOS
+- 100GB+ free disk space
+- 16GB+ RAM (32GB recommended)
+- Python 3.8+
+- Git, curl, lsb_release
+
+### Clone and Setup
+
+```bash
+# Install depot_tools
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+export PATH="$PATH:$(pwd)/depot_tools"
+
+# Create working directory
+mkdir pat-browser && cd pat-browser
+
+# Fetch Chromium source
+fetch --nohooks chromium
+cd src
+
+# Checkout stable branch
+git checkout tags/120.0.6099.109 -b pat-browser
+
+# Apply PAT Browser patches
+git apply ../patches/pat-data-collector.patch
+git apply ../patches/pat-qwen-integration.patch
+git apply ../patches/pat-wallet-ui.patch
+
+# Install dependencies
+gclient sync
+./build/install-build-deps.sh
+
+# Configure build
+gn gen out/Release --args='
+  is_official_build=true
+  is_debug=false
+  target_cpu="x64"
+  proprietary_codecs=true
+  ffmpeg_branding="Chrome"
+  enable_pat_data_collection=true
+  pat_qwen_api_endpoint="https://api.pat-browser.io/qwen"
+'
+
+# Build (takes 2-6 hours depending on hardware)
+autoninja -C out/Release chrome
+```
+
+### Build Outputs
+
+```
+out/Release/
+├── chrome                    # Main browser executable
+├── chrome_sandbox            # Sandbox helper
+├── libpat_collector.so       # Data collection library
+├── libpat_qwen.so            # Qwen integration library
+├── resources/
+│   └── pat_wallet/           # Wallet UI resources
+└── locales/                  # Localization files
+```
+
+## 6. Project Structure
+
+```
+browser/
+├── patches/
+│   ├── pat-data-collector.patch    # Chromium patches for data collection
+│   ├── pat-qwen-integration.patch  # Qwen AI integration
+│   └── pat-wallet-ui.patch         # Wallet and settings UI
+├── src/
+│   ├── collector/
+│   │   ├── browsing_data_collector.cc
+│   │   ├── browsing_data_collector.h
+│   │   ├── event_types.h
+│   │   └── privacy_filter.cc
+│   ├── qwen/
+│   │   ├── intent_analyzer.cc
+│   │   ├── intent_analyzer.h
+│   │   ├── qwen_client.cc
+│   │   └── segment_builder.cc
+│   ├── wallet/
+│   │   ├── pat_wallet_controller.cc
+│   │   ├── marketplace_client.cc
+│   │   └── ui/
+│   │       ├── wallet_page.html
+│   │       ├── settings_page.html
+│   │       └── data_viewer.html
+│   └── storage/
+│       ├── encrypted_store.cc
+│       └── segment_cache.cc
+├── tests/
+│   ├── collector_test.cc
+│   ├── intent_analyzer_test.cc
+│   └── privacy_filter_test.cc
+└── BUILD.gn
+```
+
+## 7. Native Components
+
+### Data Collector (C++)
+
+```cpp
+// browsing_data_collector.h
+namespace pat {
+
+struct BrowsingEvent {
+  enum Type {
+    PAGE_LOAD,
+    PAGE_UNLOAD,
+    SCROLL,
+    CLICK,
+    FORM_SUBMIT,
+    SEARCH_QUERY
+  };
+
+  Type type;
+  std::string url_hash;
+  base::Time timestamp;
+  base::TimeDelta duration;
+  double scroll_depth;
+  std::string element_type;
+  std::string search_query;  // Only for SEARCH_QUERY type
+};
+
+class BrowsingDataCollector {
+ public:
+  static BrowsingDataCollector* GetInstance();
+
+  void OnPageLoad(const GURL& url, content::WebContents* contents);
+  void OnPageUnload(const GURL& url, base::TimeDelta time_on_page);
+  void OnScroll(double depth_percentage);
+  void OnClick(const std::string& element_selector);
+  void OnSearchQuery(const std::string& query);
+
+  bool IsCollectionEnabled() const;
+  bool IsIncognito(content::WebContents* contents) const;
+  bool IsExcludedSite(const GURL& url) const;
+
+ private:
+  std::unique_ptr<PrivacyFilter> privacy_filter_;
+  std::unique_ptr<EncryptedStore> local_store_;
+};
+
+}  // namespace pat
+```
+
+### Intent Analyzer (Qwen Integration)
+
+```cpp
+// intent_analyzer.h
+namespace pat {
+
+enum class IntentType {
+  PURCHASE_INTENT,
+  RESEARCH_INTENT,
+  COMPARISON_INTENT,
+  ENGAGEMENT_INTENT,
+  NAVIGATION_INTENT
+};
+
+struct IntentSignal {
+  IntentType type;
+  double confidence;
+  std::vector<std::string> categories;
+  base::Time detected_at;
+};
+
+class IntentAnalyzer {
+ public:
+  explicit IntentAnalyzer(QwenClient* qwen_client);
+
+  // Analyze recent browsing events and detect intent signals
+  std::vector<IntentSignal> AnalyzeEvents(
+      const std::vector<BrowsingEvent>& events);
+
+  // Build a data segment from detected signals
+  DataSegment BuildSegment(
+      const std::vector<IntentSignal>& signals,
+      int time_window_days,
+      double confidence_min,
+      double confidence_max);
+
+ private:
+  std::unique_ptr<QwenClient> qwen_client_;
+};
+
+}  // namespace pat
+```
+
+## 8. Security Considerations
+
+### Data Protection
+
+1. **Local Encryption** – All browsing data encrypted at rest using AES-256-GCM
+   with a key derived from user's PAT wallet password.
+
+2. **Minimal Data Transmission** – Only aggregated segments are uploaded to
+   the marketplace, never raw browsing history.
+
+3. **Hash-based Anonymization** – URLs and identifiers are hashed before
+   segment creation; original values never leave the device.
+
+4. **Secure Qwen Communication** – API calls to Qwen use TLS 1.3 with
+   certificate pinning.
+
+### User Controls
+
+1. **Granular Opt-out** – Per-site, per-category, or global data collection
+   toggle.
+
+2. **Data Viewer** – Built-in UI to see all collected data before any upload.
+
+3. **Delete Anytime** – One-click deletion of all local data.
+
+4. **Export** – Download all data in machine-readable format (JSON).
+
+## 9. Development Roadmap
+
+### Phase 1: Foundation
+- [ ] Set up Chromium build environment
+- [ ] Implement basic data collector hooks
+- [ ] Create local encrypted storage
+- [ ] Build privacy filter and exclusion system
+
+### Phase 2: AI Integration
+- [ ] Integrate Qwen client (API-based initially)
+- [ ] Implement intent signal detection
+- [ ] Build segment creation pipeline
+- [ ] Add confidence scoring
+
+### Phase 3: Marketplace Integration
+- [ ] Implement PAT wallet UI
+- [ ] Build marketplace API client
+- [ ] Add segment upload and pricing
+- [ ] Integrate zkSync Era for settlements
+
+### Phase 4: Polish & Launch
+- [ ] Security audit
+- [ ] Performance optimization
+- [ ] Cross-platform builds (Linux, macOS, Windows)
+- [ ] Beta release
+
+## 10. Next Steps
+
+1. **Set up build environment** – Install depot_tools and fetch Chromium source
+2. **Create initial patches** – Hook into Chromium's navigation and event system
+3. **Implement data collector** – Start with URL and time-on-page tracking
+4. **Build privacy filter** – Implement incognito detection and site exclusions
+5. **Test locally** – Verify data collection works without breaking browsing
+
+See `contracts/` for the PAT token smart contract implementation.
