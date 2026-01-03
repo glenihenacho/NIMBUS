@@ -1,18 +1,38 @@
 # PAT Coin Launch – ERC‑20 Implementation & Launch Plan
 
 This document outlines the technical and strategic steps required to design,
-build, test and launch the **PAT** token on Ethereum (or a compatible L2).
+build, test and launch the **PAT** token on **zkSync Era**.
 Launching a token is not just a coding exercise; it requires thoughtful
 tokenomics, legal compliance, security, infrastructure and marketing.  This
 guide draws on industry best practices from up‑to‑date sources.
+
+## Key Specifications
+
+| Parameter | Value |
+|-----------|-------|
+| **Network** | zkSync Era |
+| **Token Standard** | ERC‑20 |
+| **Total Supply** | 555,222,888 PAT |
+| **Decimals** | 18 |
+| **Jurisdiction** | Wyoming, USA |
+| **Token Type** | Utility Token |
+
+### Token Allocation
+
+| Category | Percentage | Tokens | Vesting |
+|----------|------------|--------|---------|
+| Treasury | 50% | 277,611,444 | None |
+| Ecosystem | 30% | 166,566,866 | None |
+| ICO | 10% | 55,522,289 | None |
+| Team | 10% | 55,522,289 | 6‑12 months linear |
 
 ## 1. Purpose and Whitepaper
 
 The first step is to define **why** PAT exists and what value it will provide to
 its holders.  A whitepaper should clearly describe the problem being solved,
-the token’s utility within the ecosystem and the underlying technology.
-Coinbound’s token‑launch guide highlights that a whitepaper acts as a
-project’s blueprint, outlining its mission, tokenomics and team【872926676590851†L102-L113】.
+the token's utility within the ecosystem and the underlying technology.
+Coinbound's token‑launch guide highlights that a whitepaper acts as a
+project's blueprint, outlining its mission, tokenomics and team.
 Use the whitepaper to address:
 
 - **Use case** – What services or functionality will PAT unlock (e.g. access
@@ -25,87 +45,90 @@ Use the whitepaper to address:
 
 ## 2. Token Type and Tokenomics
 
-PAT will be a **fungible ERC‑20 token**, meaning all tokens are identical and
-interchangeable.  Coinbound notes that fungible tokens are well suited for
-payments, staking or rewards【872926676590851†L114-L123】.
+PAT is a **fungible ERC‑20 token** on zkSync Era with a **fixed supply of
+555,222,888 tokens**.  The token is designed for utility within the PAT
+ecosystem: settling data marketplace transactions, collateralizing market
+maker positions and paying for AI browser services.
 
-Designing robust tokenomics is critical.  Tokenomics determine how many tokens
-will ever exist, how they are allocated and how demand is created.  Key
-considerations include:
+### Confirmed Tokenomics
 
-- **Total supply** – Decide whether PAT will have a capped supply (fixed
-  maximum) or an inflationary model.  Capped supply can enhance scarcity,
-  whereas inflation may fund ongoing development.
-- **Allocation** – Plan how tokens are distributed among the team,
-  early investors, community, marketing, reserves, liquidity pools, etc.
-- **Vesting schedules** – Implement vesting contracts for team and
-  advisor allocations to align incentives.
-- **Demand mechanisms** – Encourage use of PAT by offering staking rewards,
-  fee discounts or governance rights.  Tokenomics should create utility and
-  encourage long‑term holding【872926676590851†L132-L147】.
-
-Document the tokenomics in the whitepaper and ensure they are clearly
-implemented in the smart contract.
+- **Total supply** – 555,222,888 PAT (fixed, no inflation).
+- **Allocation**:
+  - **50% Treasury** (277,611,444 PAT) – Protocol reserves for future development,
+    partnerships and liquidity provisioning.
+  - **30% Ecosystem** (166,566,866 PAT) – Rewards for data providers, marketplace
+    incentives and community grants.
+  - **10% ICO** (55,522,289 PAT) – Public sale for initial distribution.
+  - **10% Team** (55,522,289 PAT) – Core contributors with 6‑12 month linear vesting.
+- **Vesting** – Team tokens vest linearly over 6‑12 months to align long‑term
+  incentives.
+- **Demand mechanisms** – PAT is required for all marketplace transactions,
+  market maker collateral and access to premium AI browser features.
 
 ## 3. Legal Entity & Compliance
 
-Launching a token touches on financial regulations.  Coinbound advises forming
-a legal entity in a crypto‑friendly jurisdiction (e.g. Switzerland, Estonia or
-Singapore) to protect the team and investors【872926676590851†L174-L183】 and
-evaluating regulatory classification (security, utility or payment token)【872926676590851†L186-L193】.
+PAT will be incorporated as a **Wyoming DAO LLC**, leveraging Wyoming's
+crypto‑friendly legislation that recognizes DAOs as legal entities.  The token
+is classified as a **utility token** — it provides access to ecosystem services
+rather than representing an investment contract.
 
 Key compliance tasks:
 
-1. **Entity formation** – Incorporate in a jurisdiction with clear crypto
-   regulations.
+1. **Entity formation** – Register a Wyoming DAO LLC with the Wyoming Secretary
+   of State.  Wyoming offers clear crypto regulations and DAO recognition.
 2. **Know Your Customer (KYC) & Anti‑Money Laundering (AML)** – Implement
-   procedures for token sale participants【872926676590851†L186-L190】.
-3. **Legal review** – Engage counsel to review the whitepaper and tokenomics
-   to determine whether the token is a security under local law.
-4. **Privacy & data policies** – If PAT interacts with the data marketplace or AI
-   browser, ensure privacy policies and terms of service are in place.
+   procedures for ICO participants to comply with US regulations.
+3. **Legal review** – Engage Wyoming‑based counsel to confirm utility token
+   classification and ensure compliance with state and federal law.
+4. **Privacy & data policies** – Implement privacy policies for the data
+   marketplace and AI browser that comply with applicable regulations.
 
 ## 4. Smart Contract Development
 
-The core of PAT is its smart contract.  Follow a security‑first approach by
-leveraging well‑tested libraries.  QuickNode recommends using
-OpenZeppelin’s ERC‑20 implementation to inherit reliable functionality【798565938230081†L294-L303】.
+The core of PAT is its smart contract deployed on **zkSync Era**.  Follow a
+security‑first approach by leveraging well‑tested libraries.  OpenZeppelin's
+ERC‑20 implementation provides reliable, audited functionality.
 
 ### 4.1 Development Environment
 
-Developers can use **Remix**, **Hardhat** or **Foundry**.  For a fast start,
-QuickNode shows how to compile and deploy using Remix:
+For zkSync Era deployment, use **Hardhat** with the **zkSync plugins**:
 
-1. **Get test ETH** – Install a Web3 wallet (e.g. MetaMask), connect to a
-   faucet and obtain test ETH on a test network like Sepolia【798565938230081†L268-L281】.
-2. **Write the contract** – Create a new Solidity file and import
-   `@openzeppelin/contracts/token/ERC20/ERC20.sol`【798565938230081†L294-L305】.  Define
-   your token name, symbol and initial supply in the constructor:
+1. **Set up the environment** – Install Hardhat and zkSync tooling:
+   ```bash
+   npm install --save-dev hardhat @matterlabs/hardhat-zksync-solc @matterlabs/hardhat-zksync-deploy
+   npm install @openzeppelin/contracts
+   ```
+
+2. **Configure for zkSync Era** – Update `hardhat.config.ts` for zkSync Era
+   testnet and mainnet networks.
+
+3. **Write the contract** – Create a Solidity file with the PAT token:
 
    ```solidity
    // SPDX-License-Identifier: MIT
    pragma solidity ^0.8.20;
 
    import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+   import "@openzeppelin/contracts/access/Ownable.sol";
 
-   contract PAT is ERC20 {
-       constructor(uint256 initialSupply) ERC20("PAT", "PAT") {
-           _mint(msg.sender, initialSupply);
+   contract PAT is ERC20, Ownable {
+       uint256 public constant TOTAL_SUPPLY = 555_222_888 * 10**18;
+
+       constructor() ERC20("PAT", "PAT") Ownable(msg.sender) {
+           _mint(msg.sender, TOTAL_SUPPLY);
        }
    }
    ```
 
-   - **Name & symbol** – Update `"PAT"` and `"PAT"` as needed.
-   - **Initial supply** – Pass the total supply multiplied by `10 ** decimals()`.
+   - **Total supply** – 555,222,888 PAT with 18 decimals.
+   - **Ownable** – Enables administrative functions for token distribution.
 
-3. **Compile & deploy** – Use the Solidity compiler in Remix to compile and
-   then deploy using the Injected Provider environment.  Ensure your MetaMask
-   is set to the correct test network【798565938230081†L350-L367】.
+4. **Compile & deploy** – Use `npx hardhat compile` then deploy to zkSync Era
+   testnet using the zkSync deploy scripts.  Ensure MetaMask is configured for
+   zkSync Era network.
 
-For larger projects or CI pipelines, use **Hardhat** or **Foundry**.  Set up a
-project, install `@openzeppelin/contracts`, write tests (e.g. using
-`chai`/`ethers.js`), and write deployment scripts to deploy to testnets and
-mainnets.
+For CI/CD pipelines, configure GitHub Actions with zkSync deployment scripts
+to automate testing and deployment to zkSync Era testnet and mainnet.
 
 ### 4.2 Security & Auditing
 
@@ -114,10 +137,10 @@ Security is paramount.  Before mainnet deployment:
 1. **Internal testing** – Write unit tests to ensure standard ERC‑20
    functionality, token supply invariants and edge cases.
 2. **Testnet deployment** – Deploy on a public testnet (Sepolia, Goerli) and
-   interact with the contract to verify behavior【872926676590851†L209-L215】.
+   interact with the contract to verify behavior.
 3. **External audit** – Engage a reputable blockchain security firm to audit the
    contract.  Coinbound emphasizes that a third‑party audit helps uncover
-   vulnerabilities and builds trust【872926676590851†L217-L224】.
+   vulnerabilities and builds trust.
 4. **Verify source code** – Verify the contract on a block explorer (e.g.
    Etherscan) to improve transparency.
 
@@ -127,13 +150,13 @@ A token is only useful when it can be easily used.  Build supporting
 infrastructure before launching:
 
 - **Wallet integration** – Ensure PAT works seamlessly with common wallets like
-  MetaMask, Trust Wallet and hardware wallets【872926676590851†L230-L237】.
+  MetaMask, Trust Wallet and hardware wallets.
 - **Blockchain explorer** – Provide links for users to view PAT transactions and
-  contract details【872926676590851†L238-L240】.
+  contract details.
 - **Website & documentation** – Create a professional website with the
   whitepaper, tokenomics, roadmap and instructions for obtaining and using PAT.
 - **Liquidity & listing** – Prepare liquidity pools on decentralized exchanges
-  (e.g. Uniswap) and explore listing on centralized exchanges if feasible【872926676590851†L284-L293】.
+  (e.g. Uniswap) and explore listing on centralized exchanges if feasible.
 
 ## 6. Go‑to‑Market Strategy
 
@@ -141,34 +164,34 @@ Select a launch strategy based on your goals and regulatory constraints.  Option
 include:
 
 1. **Initial Coin Offering (ICO)** – Public sale to raise funds; suitable for
-   projects with a strong community and regulatory preparedness【872926676590851†L245-L254】.
+   projects with a strong community and regulatory preparedness.
 2. **Initial DEX Offering (IDO)** – Launch via decentralized exchange, providing
-   immediate liquidity but facing high competition【872926676590851†L254-L256】.
+   immediate liquidity but facing high competition.
 3. **Private sale** – Sell tokens to selected investors or partners before
-   public launch【872926676590851†L257-L258】.
+   public launch.
 
 Prepare marketing campaigns across social platforms, work with influencers and
-media outlets and incentivize early adopters via airdrops or bonuses【872926676590851†L264-L274】.
+media outlets and incentivize early adopters via airdrops or bonuses.
 
 ## 7. Launch & Post‑Launch Activities
 
 During launch:
 
 1. **Deploy mainnet contract** – Double‑check name, symbol and supply before
-   deploying【872926676590851†L284-L289】.
+   deploying.
 2. **Create liquidity** – Seed liquidity pools on DEXs and ensure there is a
    mechanism for users to acquire PAT.
 3. **Announce publicly** – Use your website, social channels and community
-   platforms to announce the launch and provide clear instructions【872926676590851†L294-L296】.
+   platforms to announce the launch and provide clear instructions.
 
 After launch, maintain momentum:
 
 - **Community engagement** – Host AMAs, provide regular updates and showcase
-  success stories【872926676590851†L298-L306】.
+  success stories.
 - **Governance & updates** – If PAT includes governance rights, implement
   governance mechanisms (e.g. DAO) and solicit feedback.
 - **Monitoring & analytics** – Track trading volume, holders, on‑chain activity
-  and adjust tokenomics or rewards as needed【872926676590851†L309-L319】.
+  and adjust tokenomics or rewards as needed.
 
 ## 8. Next Steps for Developers
 
