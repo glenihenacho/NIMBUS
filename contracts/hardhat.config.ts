@@ -18,10 +18,10 @@ const config: HardhatUserConfig = {
     },
   },
   zksolc: {
-    version: "1.3.22",
+    version: "1.5.0",
     settings: {},
   },
-  defaultNetwork: "zkSyncTestnet",
+  defaultNetwork: "hardhat",
   networks: {
     hardhat: {
       zksync: false,
