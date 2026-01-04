@@ -173,16 +173,27 @@ Supply and demand for each market are finite and time‑sensitive.
 
 ### Broker Role & Revenue
 
-The broker:
-1. **Quotes bid/ask prices** – Using a proprietary pricing algorithm
-2. **Buys from providers** – At the bid price
-3. **Sells to consumers** – At the ask price
-4. **Earns the spread** – Revenue = (Ask - Bid) × Volume
-5. **Manages inventory** – Escrowed access rights, not raw data
+The broker operates via **atomic settlement**—a single smart contract transaction
+that splits payment to all three parties simultaneously:
 
-The broker holds **escrowed access capacity** and **PAT collateral** to
-guarantee future availability.  Raw data never leaves the user's device;
-only anonymized intent signals are brokered.
+```
+buySegment(segmentId):
+  ├─ Consumer pays ASK (100 PAT)
+  ├─ Browser Users receive BID (70 PAT) ✓
+  ├─ Broker receives Spread (30 PAT) ✓
+  └─ Consumer receives data access rights ✓
+
+All three parties settle atomically. Zero inventory risk.
+```
+
+**Key advantages over traditional brokerage:**
+- **No inventory holding** – Broker never holds access rights alone
+- **Zero capital requirements** – No need to pre-buy from providers
+- **Instant settlement** – Spread earned immediately on each transaction
+- **No counterparty risk** – All parties settle or transaction reverts
+- **Blockchain-native** – Fits zkSync Era atomic transaction model
+
+Revenue formula: `Revenue = (ASK - BID) × Volume`
 
 ### Pricing Algorithm
 
@@ -203,13 +214,35 @@ The **bid/ask spread** is calculated as:
 
 Spread widens under high volatility or thin liquidity.
 
-### Broker Inventory System
+### Smart Contract Architecture
 
-The broker manages:
-- **Access capacity** – Rights to serve N queries against segment pool
-- **PAT collateral** – Staked tokens backing availability guarantees
-- **Exposure limits** – Max position per segment type and window
-- **Freshness reserves** – Buffer for decay-adjusted settlements
+**Segment Registry (minimal storage):**
+```
+segmentId → {
+  type: "PURCHASE_INTENT",
+  window: "7D",
+  confidence: 0.75,
+  ASK: 100
+}
+```
+
+**Global Configuration:**
+```
+brokerMargin: 0.30        // Percentage of ASK kept by broker
+brokerWallet: 0x...       // Broker revenue recipient
+usersPoolWallet: 0x...    // Provider payout pool
+phase: 1                  // Current market phase (1-4)
+```
+
+**Governance Function (owner-only):**
+```
+updateBrokerContract(paramKey, paramValue):
+  ├─ brokerMargin: adjust global percentage
+  ├─ brokerWallet: update revenue recipient
+  ├─ usersPoolWallet: update provider payout recipient
+  ├─ phase: progress through 1→2→3→4
+  └─ paused: emergency pause mechanism
+```
 
 ### Risk Controls
 
