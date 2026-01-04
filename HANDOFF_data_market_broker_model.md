@@ -14,23 +14,37 @@ The **market maker** role in the data performance marketplace is actually a **da
 
 ## Corrected Model
 
-### Participants & Flow
+### Participants & Atomic Flow
 ```
-AI Browser (provides segments)
-    ↓
-YOU (Market Maker/Data Broker)
-    ├─ Quote bid/ask prices (via proprietary algorithm)
-    ├─ Manage access capacity (escrowed rights, not raw data)
-    ├─ Earn spread (buy from providers, sell to consumers)
-    └─ Control liquidity and phase progression
-    ↓
-Data Consumers (buy segments at ask price)
+PAT Browser Users (data providers/sellers)
+    ↓ sell at BID price
+YOU (Broker/Data Marketplace Operator)
+    ↓ sell at ASK price
+Data Consumers (buyers/data users)
+
+Revenue = (ASK - BID) × Volume
 ```
 
-### Key Clarification
-- **Market Maker ≠ Data Buyer** → Market Maker = Data Broker (middleman)
-- You don't hold raw data (only access rights)
-- You profit from the bid/ask spread
+### Core Mechanism: Atomic Settlement
+
+**Single transaction, no inventory holding:**
+
+When a Data Consumer buys 1 segment at ASK (100 PAT):
+```
+Smart contract executes atomically:
+├─ Browser Users receive BID (70 PAT) ✓
+├─ YOU receive Spread (30 PAT) ✓
+└─ Consumer receives data access rights ✓
+
+All three parties settle simultaneously.
+Zero inventory risk. Zero timing mismatch.
+```
+
+### Key Clarifications
+- **No broker inventory** – You never hold access rights alone
+- **Atomic smart contracts** – Single transaction splits payment to all three parties
+- **Zero capital lockup** – Spread is earned instantly on each transaction
+- **Blockchain-native** – Fits zkSync Era atomic transaction model better than traditional brokerage
 - You control when/if speculation layers (Phases 3-4) launch
 
 ---
@@ -48,24 +62,67 @@ Data Consumers (buy segments at ask price)
 
 ## Revenue Model
 
+**All Phases:**
+- **Atomic spread model:** `Revenue = (ASK - BID) × Volume`
+- No inventory holding, no capital requirements
+- Earned instantly on each transaction settlement
+- Smart contract automates the split; you can't deviate from pricing
+
 **Phase 1-2 (Foundation):**
-- Spread-based: buy from providers at X, sell to consumers at X + margin
-- Volume: utility-driven demand for intent signals
+- Volume driven by utility-based demand for intent signals
+- Spread optimized for market penetration vs. margin
 
 **Phase 3-4 (Speculation):**
-- Spread + directional positioning (if you choose to be counterparty)
 - Higher volumes from derivative traders
-- Market-making fees from call/put issuance
+- Additional fees from call/put issuance (if you choose to offer them)
+- Core atomic spread mechanism remains unchanged
 
 ---
 
 ## Why This Model is Sound
 
-1. **Clear moat** – Your proprietary pricing algorithm IS your edge
-2. **Aligned incentives** – You profit from accurate pricing
-3. **Regulatory clarity** – Single broker/custodian (Wyoming DAO LLC) is cleaner
-4. **Proven model** – Bloomberg, Refinitiv, etc. operate this way
-5. **Controlled rollout** – You decide Phase 3-4 timing based on stability
+1. **Clear moat** – Your proprietary pricing algorithm IS your edge (BID/ASK determined by your formula)
+2. **Atomic settlement** – Zero inventory risk, zero capital requirements, all parties settle simultaneously
+3. **Aligned incentives** – You profit from accurate pricing (wider spreads on well-priced segments)
+4. **Blockchain-native** – Atomic transactions fit zkSync Era better than traditional brokerage
+5. **Regulatory clarity** – Single broker/custodian (Wyoming DAO LLC) is cleaner than decentralized market making
+6. **Proven model** – DEXs and spot exchanges operate this atomic model at scale
+7. **Controlled rollout** – You decide Phase 3-4 timing and feature expansion based on stability
+
+---
+
+## Atomic Settlement Mechanics (Critical)
+
+**The single most important implementation detail:**
+
+When a Data Consumer purchases a segment, ONE smart contract call handles THREE payments:
+
+```
+Transaction: Consumer buys segment at ASK price (100 PAT)
+
+atomicBuySegment(segmentId, askPrice=100):
+  ├─ transfer(askPrice, brokerWallet)          // Broker receives spread (30 PAT)
+  ├─ transfer(bidPrice, providerPool)          // Browser users receive BID (70 PAT)
+  └─ grantAccess(consumer, segmentId)          // Consumer gets access rights
+
+  If ANY step fails → entire transaction reverts
+  If ALL succeed → settlement is instant and irreversible
+```
+
+**Why this matters:**
+- **No waiting period** – Spread earned immediately, no T+1 settlement
+- **No counterparty risk** – All three parties settle or none do
+- **No inventory liquidity drain** – Broker never holds access rights
+- **Smart contract enforces pricing** – BID/ASK is hardcoded; can't be altered post-quote
+
+**Contrast with traditional broker:**
+```
+❌ Traditional: Broker buys from provider → holds inventory → sells to consumer
+   (Broker capital at risk, inventory decay, timing mismatch)
+
+✅ Atomic: Smart contract splits one payment to provider + broker + access for consumer
+   (Zero capital, zero inventory, instant settlement)
+```
 
 ---
 
@@ -86,9 +143,16 @@ Data Consumers (buy segments at ask price)
    - PAT collateral requirements per phase
    - Exposure limits per segment/window
 
-4. **Smart contract architecture (zkSync Era)**
-   - Broker settlement: receives PAT from consumers, pays providers
-   - Access rights registration (who owns rights to which segments)
+4. **Smart contract architecture (zkSync Era) – Atomic Settlement**
+   - **Core mechanism:** Single transaction splits PAT payment to all parties
+     - Consumer sends ASK price (e.g., 100 PAT)
+     - Smart contract atomically:
+       - Sends BID amount to browser users (e.g., 70 PAT)
+       - Sends spread to broker (e.g., 30 PAT)
+       - Grants consumer access rights to data segment
+   - **No intermediate states:** All settle together or transaction reverts
+   - **Pricing enforced by contract:** BID/ASK hardcoded per segment/window, algorithm cannot be bypassed
+   - Access rights registration (who owns rights to which segments, backed by smart contract)
    - Phase-gated derivative enablement (Phase 3+ requires governance vote)
 
 5. **Speculation layer (Phase 4 planning)**
@@ -101,10 +165,18 @@ Data Consumers (buy segments at ask price)
 ## Notes
 
 - This clarification removes ambiguity from the original document
-- You're not running a permissionless DEX; you're running a regulated data brokerage
-- Wyoming DAO LLC provides legal clarity for this structure
+- You're running a **regulated data brokerage on blockchain**, not a permissionless DEX
+- **Atomic settlement is the architectural centerpiece** – not a traditional "buy then sell" model
+- Wyoming DAO LLC provides legal and operational clarity for this structure
 - Phases provide a clear path to introducing speculation without regulatory risk
+- **Smart contracts enforce pricing algorithm** – ensures BID/ASK spreads cannot be manipulated post-quote
+- Zero capital requirements and zero inventory risk are massive operational advantages
 
 ---
 
-**Ready for Opus:** Yes. This handoff clarifies the business model, participants, and implementation priorities.
+**Ready for Opus:** Yes. This handoff clarifies:
+- Business model (atomic brokerage, not traditional)
+- Participants (PAT Browser Users → Broker → Data Consumers)
+- Revenue (Spread × Volume, earned instantly)
+- Implementation focus (Smart contract atomic settlement)
+- Pricing control (Your algorithm determines BID/ASK per segment)
