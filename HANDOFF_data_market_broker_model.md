@@ -116,10 +116,10 @@ When a Data Consumer buys a segment at ASK (100 PAT):
 buySegment(segmentId):
   ├─ Read segment metadata (type, window, confidence, ASK)
   ├─ Read globalBrokerMargin (0.30)
-  ├─ Calculate userPayout = ASK × (1 - brokerMargin) = 70
   ├─ Calculate brokerSpread = ASK × brokerMargin = 30
-  ├─ transfer(70 PAT) → Browser Users Pool
-  ├─ transfer(30 PAT) → Broker Wallet
+  ├─ Calculate userPayout = ASK - brokerSpread = 70
+  ├─ transfer(userPayout) → Browser Users Pool
+  ├─ transfer(brokerSpread) → Broker Wallet
   └─ grantAccess(consumer, segmentId)
 
   If ANY step fails → entire transaction reverts
@@ -180,8 +180,8 @@ updateBrokerContract(paramKey, paramValue):
    - **Global configuration:** Single `brokerMargin` percentage (e.g., 0.30)
    - **Core transaction:** `buySegment(segmentId)` atomically:
      - Reads segment ASK and global margin
-     - Calculates userPayout = ASK × (1 - margin)
      - Calculates brokerSpread = ASK × margin
+     - Calculates userPayout = ASK - brokerSpread
      - Transfers both amounts simultaneously + grants access rights
    - **No intermediate states:** All settle together or transaction reverts
    - **Governance function:** `updateBrokerContract(paramKey, paramValue)`
