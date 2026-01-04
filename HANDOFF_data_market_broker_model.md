@@ -95,25 +95,57 @@ Zero inventory risk. Zero timing mismatch.
 
 **The single most important implementation detail:**
 
-When a Data Consumer purchases a segment, ONE smart contract call handles THREE payments:
+**Segment Storage (Minimal):**
+```
+Segment Registry:
+  segmentId → {
+    type: "AUTO_INTENT",
+    window: "7D",
+    confidence: 0.75,
+    ASK: 100
+  }
+
+Global Config:
+  brokerMargin: 0.30  // Percentage of ASK that broker keeps
+```
+
+**Atomic Settlement (Single Transaction):**
+When a Data Consumer buys a segment at ASK (100 PAT):
 
 ```
-Transaction: Consumer buys segment at ASK price (100 PAT)
-
-atomicBuySegment(segmentId, askPrice=100):
-  ├─ transfer(askPrice, brokerWallet)          // Broker receives spread (30 PAT)
-  ├─ transfer(bidPrice, providerPool)          // Browser users receive BID (70 PAT)
-  └─ grantAccess(consumer, segmentId)          // Consumer gets access rights
+buySegment(segmentId):
+  ├─ Read segment metadata (type, window, confidence, ASK)
+  ├─ Read globalBrokerMargin (0.30)
+  ├─ Calculate userPayout = ASK × (1 - brokerMargin) = 70
+  ├─ Calculate brokerSpread = ASK × brokerMargin = 30
+  ├─ transfer(70 PAT) → Browser Users Pool
+  ├─ transfer(30 PAT) → Broker Wallet
+  └─ grantAccess(consumer, segmentId)
 
   If ANY step fails → entire transaction reverts
   If ALL succeed → settlement is instant and irreversible
 ```
 
+**Governance Function (Owner-only):**
+```
+updateBrokerContract(paramKey, paramValue):
+  // Can update:
+  ├─ brokerMargin: 0.25 (adjust global percentage)
+  ├─ brokerWallet: newAddress (transfer funds recipient)
+  ├─ usersPoolWallet: newAddress (update provider payout recipient)
+  ├─ phase: 1→2→3→4 (progress through phases)
+  └─ paused: true/false (emergency pause)
+
+  // Emits event and updates immediately
+  // Only callable by broker/contract owner
+```
+
 **Why this matters:**
-- **No waiting period** – Spread earned immediately, no T+1 settlement
+- **No waiting period** – Spread earned immediately on settlement
 - **No counterparty risk** – All three parties settle or none do
 - **No inventory liquidity drain** – Broker never holds access rights
-- **Smart contract enforces pricing** – BID/ASK is hardcoded; can't be altered post-quote
+- **Smart contract enforces pricing** – Segment ASK is stored; algorithm cannot be bypassed
+- **Governance flexibility** – Update margin, wallets, phase progression without redeploying
 
 **Contrast with traditional broker:**
 ```
@@ -144,16 +176,22 @@ atomicBuySegment(segmentId, askPrice=100):
    - Exposure limits per segment/window
 
 4. **Smart contract architecture (zkSync Era) – Atomic Settlement**
-   - **Core mechanism:** Single transaction splits PAT payment to all parties
-     - Consumer sends ASK price (e.g., 100 PAT)
-     - Smart contract atomically:
-       - Sends BID amount to browser users (e.g., 70 PAT)
-       - Sends spread to broker (e.g., 30 PAT)
-       - Grants consumer access rights to data segment
+   - **Segment storage:** Minimal (type, window, confidence, ASK only)
+   - **Global configuration:** Single `brokerMargin` percentage (e.g., 0.30)
+   - **Core transaction:** `buySegment(segmentId)` atomically:
+     - Reads segment ASK and global margin
+     - Calculates userPayout = ASK × (1 - margin)
+     - Calculates brokerSpread = ASK × margin
+     - Transfers both amounts simultaneously + grants access rights
    - **No intermediate states:** All settle together or transaction reverts
-   - **Pricing enforced by contract:** BID/ASK hardcoded per segment/window, algorithm cannot be bypassed
+   - **Governance function:** `updateBrokerContract(paramKey, paramValue)`
+     - Update brokerMargin without redeployment
+     - Update wallet addresses (broker, user pool)
+     - Advance phase progression (1→2→3→4)
+     - Emergency pause mechanism
+     - Owner-only callable (Wyoming DAO LLC)
    - Access rights registration (who owns rights to which segments, backed by smart contract)
-   - Phase-gated derivative enablement (Phase 3+ requires governance vote)
+   - Phase-gated derivative enablement (Phase 3+ requires governance call)
 
 5. **Speculation layer (Phase 4 planning)**
    - Call/put contract specs
