@@ -33,16 +33,34 @@ public platform with proper access control and reputation systems.
 
 ## 2. Participants & Roles
 
-Within a data marketplace, two primary roles exist:
+The PAT marketplace operates as a **data brokerage** with three distinct roles:
 
-- **Data providers** – Organizations or individuals who offer datasets or
-  data services.  Providers aim to monetize their assets.
-- **Data consumers** – Users who purchase data to extract insights or
-  enhance their own products.  Examples include analysts acquiring
-  weather data for demand forecasting.
+```
+PAT Browser Users (Data Providers)
+        ↓ sell segments at bid price
+PAT Platform (Broker/Market Maker)
+        ↓ sell segments at ask price
+Data Consumers (Buyers)
+```
 
-The marketplace should support multiple providers and consumers and include
-mechanisms to verify identities and reputations.
+### Data Providers (PAT Browser Users)
+Individuals who browse the web using the PAT Browser.  Their browsing
+behavior generates intent signal segments which they sell to the broker
+at the **bid price**.  Providers earn PAT tokens for their data.
+
+### Data Broker (PAT Platform Operator)
+The PAT platform operates as a **regulated data broker** under Wyoming DAO LLC.
+The broker:
+- Quotes continuous bid/ask prices via proprietary pricing algorithm
+- Buys segments from providers at bid, sells to consumers at ask
+- Manages escrowed access capacity (not raw data)
+- Earns the spread as revenue
+- Controls phase progression and liquidity
+
+### Data Consumers (Buyers)
+Organizations or individuals who purchase intent signal segments at the
+**ask price** to extract insights, target advertising, or enhance products.
+Examples include ad networks, market researchers, and AI training pipelines.
 
 ## 3. Design Principles & Features
 
@@ -137,72 +155,114 @@ The PAT marketplace architecture:
    intent signal segments via API.  Segments are validated, scored and listed
    automatically.
 
-## 7. Market Maker Model for Data Segments
+## 7. Broker Model for Data Segments
 
-The PAT marketplace employs a **market‑maker model** tailored to data
-segments.  Each traded unit is a **segment** identified by its type,
-time window and confidence score.  A market is defined as a standardized
-contract:
+The PAT platform operates as the **sole broker** for intent signal segments.
+This is not a permissionless DEX—it is a regulated data brokerage where the
+platform operator (YOU) serves as the middleman between providers and consumers.
 
-``Segment | Window | Confidence``  
-`AUTO_INTENT | 7D | 0.70–0.85`
+### Segment Contracts
 
-Supply and demand for each market are finite and time‑sensitive.  The market
-maker’s role is to quote continuous bid/ask prices, absorb short‑term
-imbalances, manage freshness decay risk and earn the spread.  The maker holds
-**escrowed access capacity** and **PAT collateral** to guarantee future
-availability; it does **not** hold raw data.
+Each traded unit is a **segment** identified by its type, time window and
+confidence score:
 
-### Pricing Function
+``Segment | Window | Confidence``
+`PURCHASE_INTENT | 7D | 0.70–0.85`
 
-Prices are driven by four live variables:
+Supply and demand for each market are finite and time‑sensitive.
+
+### Broker Role & Revenue
+
+The broker:
+1. **Quotes bid/ask prices** – Using a proprietary pricing algorithm
+2. **Buys from providers** – At the bid price
+3. **Sells to consumers** – At the ask price
+4. **Earns the spread** – Revenue = (Ask - Bid) × Volume
+5. **Manages inventory** – Escrowed access rights, not raw data
+
+The broker holds **escrowed access capacity** and **PAT collateral** to
+guarantee future availability.  Raw data never leaves the user's device;
+only anonymized intent signals are brokered.
+
+### Pricing Algorithm
+
+The broker's proprietary pricing function:
 
 ``Price = BaseValue × FreshnessMultiplier × DemandPressure × ScarcityFactor``
 
-- **Freshness multiplier** – New segments trade at a premium; near‑expiry
-  segments are discounted.  An automatic decay curve adjusts the multiplier
-  over the window.
-- **Demand pressure** – Measures consumption velocity relative to supply.  Faster
-  clearing increases prices; slower clearing tightens bids.
-- **Scarcity factor** – Reflects the mint rate versus burn rate and the
-  availability of substitute segments.
+| Variable | Description |
+|----------|-------------|
+| **BaseValue** | Floor price per segment type (set by broker) |
+| **FreshnessMultiplier** | 1.0→0.1 decay curve over window lifetime |
+| **DemandPressure** | Consumption velocity ÷ supply rate |
+| **ScarcityFactor** | Mint rate vs burn rate, substitute availability |
+
+The **bid/ask spread** is calculated as:
+- Bid = Price × (1 - SpreadBps/10000)
+- Ask = Price × (1 + SpreadBps/10000)
+
+Spread widens under high volatility or thin liquidity.
+
+### Broker Inventory System
+
+The broker manages:
+- **Access capacity** – Rights to serve N queries against segment pool
+- **PAT collateral** – Staked tokens backing availability guarantees
+- **Exposure limits** – Max position per segment type and window
+- **Freshness reserves** – Buffer for decay-adjusted settlements
 
 ### Risk Controls
 
-Market makers hedge risk by limiting exposure per window, widening spreads
-under volatility and requiring higher PAT margins for thin segments.  Because
-inventory consists of **access rights** rather than data, and settlements are
-cleared in PAT, market makers can absorb imbalances while earning the spread.
+Risk is managed by:
+1. Limiting exposure per window and segment type
+2. Widening spreads during volatility
+3. Requiring higher PAT margins for illiquid segments
+4. Automatic position unwinding at window expiry
 
 ## 8. Liquidity Phases & Speculation
 
-The protocol introduces speculative activity gradually to ensure price
-discovery is rooted in real utility:
+The broker introduces speculative activity gradually to ensure price
+discovery is rooted in real utility.  **The broker controls phase progression.**
+
+### Phase Access by Participant Type
+
+| Phase | Retail Users | Institutions | Broker Revenue |
+|-------|--------------|--------------|----------------|
+| **1** | Utility only (buy/sell data) | Utility only | Spread on spot trades |
+| **2** | Forward contracts (delivery required) | Forward contracts | Spread + time premiums |
+| **3** | **Locked out** | Synthetic derivatives (cash settlement) | Spread + derivative fees |
+| **4** | Options/calls/puts open | Options/calls/puts | Full derivative suite |
+
+### Phase Descriptions
 
 **Phase 1 – Utility‑anchored spot market.**  Contracts must be exercised to
 settle; there is no cash settlement or secondary trading.  This yields real
-price discovery and trusted performance metrics without regulatory drama.
+price discovery and trusted performance metrics.  The broker earns spread
+on all transactions.
 
-**Phase 2 – Forward access guarantees.**  The platform introduces contracts
+**Phase 2 – Forward access guarantees.**  The broker introduces contracts
 for future window access, freshness locks and supply assurance.  Settlement
 still requires delivery of data; no purely synthetic outcomes are allowed.
-These instruments create hedging demand rather than gambling.
+These instruments create hedging demand rather than speculation.
 
 **Phase 3 – Restricted synthetic exposure.**  Only after deep liquidity,
-stable pricing and audited performance history does the protocol allow
-PAT‑collateralised contracts with cash settlement for qualified institutions.
-Retail participants remain utility‑bound.
+stable pricing and audited performance history does the broker allow
+PAT-collateralized contracts with cash settlement **for qualified institutions
+only**.  Retail participants remain utility-bound (Phases 1-2 only).
+The broker may act as counterparty or use an AMM model.
 
 **Phase 4 – Optional open speculative layer.**  Once the underlying market
 stands on its own, speculation may amplify liquidity.  PAT becomes a universal
-clearing asset across spot and derivative markets.  Crucially, there is
-no protocol reset; the same contracts and pricing engine apply, only
-settlement rules expand.
+clearing asset across spot and derivative markets.  The broker opens
+options/calls/puts to all participants.  Phase 4 launch requires governance vote.
 
-By building a real commodity market first and letting speculation attach
-itself naturally, the protocol avoids the pitfalls of starting with
-speculation.  PAT enforces discipline and absorbs volatility throughout all
-phases.
+### Why This Model Works
+
+1. **Clear moat** – The broker's proprietary pricing algorithm is the competitive edge
+2. **Aligned incentives** – Broker profits from accurate pricing and transaction volume
+3. **Regulatory clarity** – Single regulated broker (Wyoming DAO LLC) is cleaner than DEX
+4. **Proven model** – Bloomberg, Refinitiv, and major data vendors operate similarly
+5. **Controlled rollout** – Broker decides Phase 3-4 timing based on market stability
 
 ## 9. Next Steps for Developers
 
