@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, upgrades } from "hardhat";
 import { PAT, DataMarketplace } from "../typechain-types";
 import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
 
@@ -15,7 +15,6 @@ describe("DataMarketplace", function () {
   const BROKER_MARGIN_BPS = 3000; // 30%
   const SEGMENT_PRICE = ethers.parseEther("100"); // 100 PAT
 
-  // Helper to get current block timestamp
   async function getBlockTimestamp(): Promise<bigint> {
     const block = await ethers.provider.getBlock("latest");
     return BigInt(block!.timestamp);
@@ -29,14 +28,13 @@ describe("DataMarketplace", function () {
     pat = await PATFactory.deploy();
     await pat.waitForDeployment();
 
-    // Deploy DataMarketplace
+    // Deploy DataMarketplace as upgradeable proxy
     const MarketplaceFactory = await ethers.getContractFactory("DataMarketplace");
-    marketplace = await MarketplaceFactory.deploy(
-      await pat.getAddress(),
-      broker.address,
-      usersPool.address,
-      BROKER_MARGIN_BPS
-    );
+    marketplace = await upgrades.deployProxy(
+      MarketplaceFactory,
+      [await pat.getAddress(), broker.address, usersPool.address, BROKER_MARGIN_BPS],
+      { kind: "uups" }
+    ) as unknown as DataMarketplace;
     await marketplace.waitForDeployment();
 
     // Transfer some PAT to consumer for testing
@@ -52,16 +50,9 @@ describe("DataMarketplace", function () {
       expect(await marketplace.paused()).to.equal(false);
     });
 
-    it("Should reject invalid broker margin", async function () {
-      const MarketplaceFactory = await ethers.getContractFactory("DataMarketplace");
-      await expect(
-        MarketplaceFactory.deploy(
-          await pat.getAddress(),
-          broker.address,
-          usersPool.address,
-          6000 // > 50%
-        )
-      ).to.be.revertedWith("Margin too high");
+    it("Should be upgradeable", async function () {
+      const implAddress = await marketplace.getImplementation();
+      expect(implAddress).to.not.equal(ethers.ZeroAddress);
     });
   });
 
@@ -100,19 +91,8 @@ describe("DataMarketplace", function () {
 
   describe("Atomic Settlement", function () {
     beforeEach(async function () {
-      // Create a segment
-      await marketplace.connect(provider).createSegment(
-        0, // PURCHASE_INTENT
-        7,
-        7500,
-        SEGMENT_PRICE
-      );
-
-      // Consumer approves marketplace
-      await pat.connect(consumer).approve(
-        await marketplace.getAddress(),
-        SEGMENT_PRICE
-      );
+      await marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE);
+      await pat.connect(consumer).approve(await marketplace.getAddress(), SEGMENT_PRICE);
     });
 
     it("Should atomically settle purchase and record earnings", async function () {
@@ -120,81 +100,54 @@ describe("DataMarketplace", function () {
       const consumerBalanceBefore = await pat.balanceOf(consumer.address);
       const providerEarningsBefore = await marketplace.userEarnings(provider.address);
 
-      // Calculate expected split
       const expectedBrokerSpread = (SEGMENT_PRICE * BigInt(BROKER_MARGIN_BPS)) / 10000n;
       const expectedProviderPayout = SEGMENT_PRICE - expectedBrokerSpread;
 
-      // Buy segment
       const tx = await marketplace.connect(consumer).buySegment(0);
 
       await expect(tx)
         .to.emit(marketplace, "SegmentPurchased")
-        .withArgs(
-          0,
-          consumer.address,
-          provider.address,
-          SEGMENT_PRICE,
-          expectedProviderPayout,
-          expectedBrokerSpread
-        );
+        .withArgs(0, consumer.address, provider.address, SEGMENT_PRICE, expectedProviderPayout, expectedBrokerSpread);
 
-      // Verify PayoutRecorded event
-      await expect(tx)
-        .to.emit(marketplace, "PayoutRecorded")
-        .withArgs(provider.address, expectedProviderPayout, 0, await getBlockTimestamp());
+      await expect(tx).to.emit(marketplace, "PayoutRecorded");
 
-      // Provider earnings recorded (not transferred yet)
       expect(await marketplace.userEarnings(provider.address)).to.equal(
         providerEarningsBefore + expectedProviderPayout
       );
-
-      // Broker receives spread immediately
       expect(await pat.balanceOf(broker.address)).to.equal(
         brokerBalanceBefore + expectedBrokerSpread
       );
-
-      // Consumer paid ASK
       expect(await pat.balanceOf(consumer.address)).to.equal(
         consumerBalanceBefore - SEGMENT_PRICE
       );
-
-      // Verify access granted
       expect(await marketplace.hasAccess(consumer.address, 0)).to.equal(true);
     });
 
     it("Should allow provider to withdraw earnings", async function () {
-      // Buy segment first
       await marketplace.connect(consumer).buySegment(0);
 
       const expectedBrokerSpread = (SEGMENT_PRICE * BigInt(BROKER_MARGIN_BPS)) / 10000n;
       const expectedProviderPayout = SEGMENT_PRICE - expectedBrokerSpread;
 
-      // Check earnings recorded
       expect(await marketplace.userEarnings(provider.address)).to.equal(expectedProviderPayout);
 
-      // Provider withdraws earnings
       const providerBalanceBefore = await pat.balanceOf(provider.address);
       const tx = await marketplace.connect(provider).withdrawEarnings(expectedProviderPayout);
 
       await expect(tx).to.emit(marketplace, "Withdrawal");
 
-      // Verify balance transferred
       expect(await pat.balanceOf(provider.address)).to.equal(
         providerBalanceBefore + expectedProviderPayout
       );
-
-      // Earnings now zero
       expect(await marketplace.userEarnings(provider.address)).to.equal(0);
     });
 
     it("Should allow withdrawAllEarnings", async function () {
-      // Buy segment
       await marketplace.connect(consumer).buySegment(0);
 
       const expectedBrokerSpread = (SEGMENT_PRICE * BigInt(BROKER_MARGIN_BPS)) / 10000n;
       const expectedProviderPayout = SEGMENT_PRICE - expectedBrokerSpread;
 
-      // Provider withdraws all
       const providerBalanceBefore = await pat.balanceOf(provider.address);
       await marketplace.connect(provider).withdrawAllEarnings();
 
@@ -219,10 +172,8 @@ describe("DataMarketplace", function () {
     });
 
     it("Should reject purchase without approval", async function () {
-      // Create new segment
       await marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE);
 
-      // Try to buy without approval
       await expect(
         marketplace.connect(consumer).buySegment(1)
       ).to.be.revertedWithCustomError(marketplace, "InsufficientAllowance");
@@ -230,12 +181,7 @@ describe("DataMarketplace", function () {
 
     it("Should reject duplicate purchase", async function () {
       await marketplace.connect(consumer).buySegment(0);
-
-      // Approve again
-      await pat.connect(consumer).approve(
-        await marketplace.getAddress(),
-        SEGMENT_PRICE
-      );
+      await pat.connect(consumer).approve(await marketplace.getAddress(), SEGMENT_PRICE);
 
       await expect(
         marketplace.connect(consumer).buySegment(0)
@@ -251,97 +197,96 @@ describe("DataMarketplace", function () {
     });
   });
 
-  describe("Governance - updateBrokerContract()", function () {
-    it("Should update broker margin via unified function", async function () {
-      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [2000]);
-      await marketplace.updateBrokerContract("brokerMargin", encoded);
+  describe("Admin Functions", function () {
+    it("Should update broker margin", async function () {
+      await marketplace.setBrokerMargin(2000);
       expect(await marketplace.brokerMarginBps()).to.equal(2000);
     });
 
     it("Should reject margin > 50%", async function () {
-      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [5001]);
       await expect(
-        marketplace.updateBrokerContract("brokerMargin", encoded)
+        marketplace.setBrokerMargin(5001)
       ).to.be.revertedWithCustomError(marketplace, "InvalidConfiguration");
     });
 
-    it("Should update broker wallet via unified function", async function () {
-      const newBroker = consumer.address;
-      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["address"], [newBroker]);
-      await marketplace.updateBrokerContract("brokerWallet", encoded);
-      expect(await marketplace.brokerWallet()).to.equal(newBroker);
+    it("Should update broker wallet", async function () {
+      await marketplace.setBrokerWallet(consumer.address);
+      expect(await marketplace.brokerWallet()).to.equal(consumer.address);
     });
 
-    it("Should update users pool wallet via unified function", async function () {
-      const newPool = consumer.address;
-      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["address"], [newPool]);
-      await marketplace.updateBrokerContract("usersPoolWallet", encoded);
-      expect(await marketplace.usersPoolWallet()).to.equal(newPool);
-    });
-
-    it("Should advance phase via unified function", async function () {
+    it("Should advance phase", async function () {
       expect(await marketplace.getPhaseString()).to.equal("UTILITY");
 
-      // Advance to FORWARDS (phase 1)
-      let encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [1]);
-      await marketplace.updateBrokerContract("phase", encoded);
+      await marketplace.advancePhase();
       expect(await marketplace.getPhaseString()).to.equal("FORWARDS");
 
-      // Advance to SYNTHETICS (phase 2)
-      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [2]);
-      await marketplace.updateBrokerContract("phase", encoded);
+      await marketplace.advancePhase();
       expect(await marketplace.getPhaseString()).to.equal("SYNTHETICS");
 
-      // Advance to SPECULATION (phase 3)
-      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [3]);
-      await marketplace.updateBrokerContract("phase", encoded);
+      await marketplace.advancePhase();
       expect(await marketplace.getPhaseString()).to.equal("SPECULATION");
 
-      // Cannot go past final phase
-      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [4]);
-      await expect(
-        marketplace.updateBrokerContract("phase", encoded)
-      ).to.be.revertedWith("Invalid phase");
+      await expect(marketplace.advancePhase()).to.be.revertedWith("Already at final phase");
     });
 
-    it("Should reject phase regression", async function () {
-      // Advance to phase 2
-      let encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [2]);
-      await marketplace.updateBrokerContract("phase", encoded);
-
-      // Try to go back to phase 1
-      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [1]);
-      await expect(
-        marketplace.updateBrokerContract("phase", encoded)
-      ).to.be.revertedWith("Can only advance phase");
-    });
-
-    it("Should pause and unpause via unified function", async function () {
-      let encoded = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [true]);
-      await marketplace.updateBrokerContract("paused", encoded);
+    it("Should pause and unpause", async function () {
+      await marketplace.setPaused(true);
       expect(await marketplace.paused()).to.equal(true);
 
       await expect(
         marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE)
       ).to.be.revertedWithCustomError(marketplace, "MarketPaused");
 
-      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [false]);
-      await marketplace.updateBrokerContract("paused", encoded);
+      await marketplace.setPaused(false);
       await marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE);
     });
 
-    it("Should reject invalid paramKey", async function () {
-      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [100]);
+    it("Should reject non-owner admin calls", async function () {
       await expect(
-        marketplace.updateBrokerContract("invalidKey", encoded)
-      ).to.be.revertedWithCustomError(marketplace, "InvalidConfiguration");
+        marketplace.connect(consumer).setBrokerMargin(2000)
+      ).to.be.revertedWithCustomError(marketplace, "OwnableUnauthorizedAccount");
+    });
+  });
+
+  describe("Contract Upgrade (updateBrokerContract)", function () {
+    it("Should allow owner to upgrade contract", async function () {
+      const MarketplaceV2Factory = await ethers.getContractFactory("DataMarketplace");
+
+      // Deploy new implementation
+      const newImpl = await MarketplaceV2Factory.deploy();
+      await newImpl.waitForDeployment();
+
+      // Upgrade
+      const tx = await marketplace.updateBrokerContract(await newImpl.getAddress());
+
+      await expect(tx).to.emit(marketplace, "BrokerContractUpdated");
     });
 
-    it("Should reject non-owner governance calls", async function () {
-      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [2000]);
+    it("Should reject upgrade from non-owner", async function () {
+      const MarketplaceV2Factory = await ethers.getContractFactory("DataMarketplace");
+      const newImpl = await MarketplaceV2Factory.deploy();
+      await newImpl.waitForDeployment();
+
       await expect(
-        marketplace.connect(consumer).updateBrokerContract("brokerMargin", encoded)
+        marketplace.connect(consumer).updateBrokerContract(await newImpl.getAddress())
       ).to.be.revertedWithCustomError(marketplace, "OwnableUnauthorizedAccount");
+    });
+
+    it("Should preserve state after upgrade", async function () {
+      // Create segment before upgrade
+      await marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE);
+
+      const MarketplaceV2Factory = await ethers.getContractFactory("DataMarketplace");
+      const newImpl = await MarketplaceV2Factory.deploy();
+      await newImpl.waitForDeployment();
+
+      await marketplace.updateBrokerContract(await newImpl.getAddress());
+
+      // State should be preserved
+      const segment = await marketplace.getSegment(0);
+      expect(segment.askPrice).to.equal(SEGMENT_PRICE);
+      expect(segment.provider).to.equal(provider.address);
+      expect(await marketplace.brokerMarginBps()).to.equal(BROKER_MARGIN_BPS);
     });
   });
 

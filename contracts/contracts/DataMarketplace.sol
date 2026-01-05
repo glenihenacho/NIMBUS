@@ -1,26 +1,36 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title DataMarketplace
- * @dev Atomic settlement marketplace for PAT intent signal segments
+ * @dev Upgradeable atomic settlement marketplace for PAT intent signal segments
  *
  * Core mechanism: Single transaction splits payment to all parties
  * - Browser Users receive BID (provider payout)
  * - Broker receives Spread (platform revenue)
  * - Consumer receives data access rights
  *
- * No inventory holding. Zero capital requirements. Instant settlement.
+ * Upgradeable via UUPS pattern:
+ * - updateBrokerContract(address) migrates to new implementation
+ * - All state preserved across upgrades
+ * - Owner-only (Wyoming DAO LLC)
  *
  * Jurisdiction: Wyoming DAO LLC
  */
-contract DataMarketplace is Ownable, ReentrancyGuard {
+contract DataMarketplace is
+    Initializable,
+    OwnableUpgradeable,
+    UUPSUpgradeable,
+    ReentrancyGuardUpgradeable
+{
     // PAT token contract
-    IERC20 public immutable patToken;
+    IERC20 public patToken;
 
     // Market phases (1-4)
     enum Phase { UTILITY, FORWARDS, SYNTHETICS, SPECULATION }
@@ -62,7 +72,6 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
     mapping(address => mapping(uint256 => bool)) public accessRights;
 
     // User earnings tracking (for custodial wallet model)
-    // Users accumulate earnings and claim via withdrawEarnings()
     mapping(address => uint256) public userEarnings;
 
     // Events
@@ -82,7 +91,6 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         uint256 brokerSpread
     );
 
-    // User payout events (for browser to listen)
     event PayoutRecorded(
         address indexed user,
         uint256 amount,
@@ -100,7 +108,9 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
     event WalletUpdated(string indexed paramKey, address wallet);
     event PhaseAdvanced(uint8 newPhase);
     event MarketPaused(bool paused);
-    event BrokerContractUpdated(string indexed paramKey);
+
+    // Contract upgrade event (per HANDOFF spec)
+    event BrokerContractUpdated(address indexed oldAddress, address indexed newAddress);
 
     // Errors
     error MarketPaused();
@@ -111,16 +121,28 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
     error PhaseNotAllowed();
     error InsufficientEarnings();
 
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Initialize the contract (replaces constructor for upgradeable pattern)
+     */
+    function initialize(
         address _patToken,
         address _brokerWallet,
         address _usersPoolWallet,
         uint256 _brokerMarginBps
-    ) Ownable(msg.sender) {
+    ) public initializer {
         require(_patToken != address(0), "Invalid PAT token");
         require(_brokerWallet != address(0), "Invalid broker wallet");
         require(_usersPoolWallet != address(0), "Invalid users pool");
-        require(_brokerMarginBps <= 5000, "Margin too high"); // Max 50%
+        require(_brokerMarginBps <= 5000, "Margin too high");
+
+        __Ownable_init(msg.sender);
+        __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
 
         patToken = IERC20(_patToken);
         brokerWallet = _brokerWallet;
@@ -129,14 +151,32 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         currentPhase = Phase.UTILITY;
     }
 
+    // ============ UUPS Upgrade Authorization ============
+
+    /**
+     * @dev Required by UUPS pattern - authorizes upgrade to new implementation
+     * This is the updateBrokerContract(address) from HANDOFF spec
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {
+        // Emit the event specified in HANDOFF
+        emit BrokerContractUpdated(address(this), newImplementation);
+    }
+
+    /**
+     * @dev Explicit updateBrokerContract function per HANDOFF spec
+     * Atomically migrates to new broker contract implementation
+     * @param newBrokerContractAddress The new implementation address
+     */
+    function updateBrokerContract(address newBrokerContractAddress) external onlyOwner {
+        require(newBrokerContractAddress != address(0), "Invalid address");
+        // UUPS upgrade - calls _authorizeUpgrade internally
+        upgradeToAndCall(newBrokerContractAddress, "");
+    }
+
     // ============ Core Functions ============
 
     /**
      * @dev Create a new segment listing
-     * @param _type Segment type (intent category)
-     * @param _windowDays Time window in days
-     * @param _confidenceBps Confidence score in basis points
-     * @param _askPrice ASK price in PAT tokens (wei)
      */
     function createSegment(
         SegmentType _type,
@@ -166,8 +206,6 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
 
     /**
      * @dev Buy a segment with atomic settlement
-     * Single transaction splits payment to provider + broker + grants access
-     * @param segmentId The segment to purchase
      */
     function buySegment(uint256 segmentId) external nonReentrant {
         if (paused) revert MarketPaused();
@@ -179,37 +217,27 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         uint256 askPrice = segment.askPrice;
         address provider = segment.provider;
 
-        // Calculate atomic split
         uint256 brokerSpread = (askPrice * brokerMarginBps) / 10000;
         uint256 providerPayout = askPrice - brokerSpread;
 
-        // Verify consumer has approved enough PAT
         if (patToken.allowance(msg.sender, address(this)) < askPrice) {
             revert InsufficientAllowance();
         }
 
         // ============ ATOMIC SETTLEMENT ============
-        // All operations happen in one transaction
-        // If any fails, entire transaction reverts
-
-        // 1. Consumer pays ASK to this contract
         require(
             patToken.transferFrom(msg.sender, address(this), askPrice),
             "Transfer from consumer failed"
         );
 
-        // 2. Record provider earnings (claimable via withdrawEarnings)
         _recordPayout(provider, providerPayout, segmentId);
 
-        // 3. Broker receives spread immediately
         require(
             patToken.transfer(brokerWallet, brokerSpread),
             "Transfer to broker failed"
         );
 
-        // 4. Consumer receives access rights
         accessRights[msg.sender][segmentId] = true;
-
         // ============ END ATOMIC SETTLEMENT ============
 
         emit SegmentPurchased(
@@ -222,16 +250,10 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         );
     }
 
-    /**
-     * @dev Check if consumer has access to a segment
-     */
     function hasAccess(address consumer, uint256 segmentId) external view returns (bool) {
         return accessRights[consumer][segmentId];
     }
 
-    /**
-     * @dev Get segment details
-     */
     function getSegment(uint256 segmentId) external view returns (
         SegmentType segmentType,
         uint256 windowDays,
@@ -242,20 +264,9 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         uint256 createdAt
     ) {
         Segment storage s = segments[segmentId];
-        return (
-            s.segmentType,
-            s.windowDays,
-            s.confidenceBps,
-            s.askPrice,
-            s.provider,
-            s.active,
-            s.createdAt
-        );
+        return (s.segmentType, s.windowDays, s.confidenceBps, s.askPrice, s.provider, s.active, s.createdAt);
     }
 
-    /**
-     * @dev Calculate payout split for a given ASK price
-     */
     function calculateSplit(uint256 askPrice) external view returns (
         uint256 providerPayout,
         uint256 brokerSpread
@@ -266,17 +277,11 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
 
     // ============ Provider Functions ============
 
-    /**
-     * @dev Deactivate a segment (provider only)
-     */
     function deactivateSegment(uint256 segmentId) external {
         require(segments[segmentId].provider == msg.sender, "Not provider");
         segments[segmentId].active = false;
     }
 
-    /**
-     * @dev Update segment ASK price (provider only)
-     */
     function updateSegmentPrice(uint256 segmentId, uint256 newAskPrice) external {
         require(segments[segmentId].provider == msg.sender, "Not provider");
         require(newAskPrice > 0, "Invalid price");
@@ -285,130 +290,63 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
 
     // ============ User Earnings & Withdrawal ============
 
-    /**
-     * @dev Record payout for a user (internal)
-     * Called during atomic settlement to track earnings
-     * @param user The user to credit
-     * @param amount The PAT amount earned
-     * @param segmentId The segment that generated earnings
-     */
-    function _recordPayout(
-        address user,
-        uint256 amount,
-        uint256 segmentId
-    ) internal {
+    function _recordPayout(address user, uint256 amount, uint256 segmentId) internal {
         userEarnings[user] += amount;
         emit PayoutRecorded(user, amount, segmentId, block.timestamp);
     }
 
-    /**
-     * @dev Withdraw accumulated earnings
-     * Called by user (or relayer on behalf of user for auto-claims)
-     * Gas fees covered by Wyoming DAO LLC via relayer service
-     * @param amount The amount to withdraw
-     */
     function withdrawEarnings(uint256 amount) external nonReentrant {
         if (userEarnings[msg.sender] < amount) revert InsufficientEarnings();
-
         userEarnings[msg.sender] -= amount;
-
-        require(
-            patToken.transfer(msg.sender, amount),
-            "Withdrawal transfer failed"
-        );
-
+        require(patToken.transfer(msg.sender, amount), "Withdrawal transfer failed");
         emit Withdrawal(msg.sender, amount, block.timestamp);
     }
 
-    /**
-     * @dev Withdraw all accumulated earnings
-     * Convenience function for auto-claim service
-     */
     function withdrawAllEarnings() external nonReentrant {
         uint256 amount = userEarnings[msg.sender];
         if (amount == 0) revert InsufficientEarnings();
-
         userEarnings[msg.sender] = 0;
-
-        require(
-            patToken.transfer(msg.sender, amount),
-            "Withdrawal transfer failed"
-        );
-
+        require(patToken.transfer(msg.sender, amount), "Withdrawal transfer failed");
         emit Withdrawal(msg.sender, amount, block.timestamp);
     }
 
-    /**
-     * @dev Get user's current earnings balance
-     */
     function getEarnings(address user) external view returns (uint256) {
         return userEarnings[user];
     }
 
-    // ============ Governance Function (Owner Only) ============
+    // ============ Admin Functions (for parameter updates between upgrades) ============
 
-    /**
-     * @dev Unified governance function to update broker contract parameters
-     * Matches HANDOFF spec: updateBrokerContract(paramKey, paramValue)
-     *
-     * Supported paramKeys:
-     *   - "brokerMargin": uint256 in basis points (max 5000 = 50%)
-     *   - "brokerWallet": address for broker revenue
-     *   - "usersPoolWallet": address for provider payouts
-     *   - "phase": uint8 to advance phase (1→2→3→4)
-     *   - "paused": bool for emergency pause
-     *
-     * @param paramKey The parameter to update
-     * @param paramValue ABI-encoded value for the parameter
-     */
-    function updateBrokerContract(
-        string calldata paramKey,
-        bytes calldata paramValue
-    ) external onlyOwner {
-        bytes32 keyHash = keccak256(bytes(paramKey));
+    function setBrokerMargin(uint256 newMarginBps) external onlyOwner {
+        if (newMarginBps > 5000) revert InvalidConfiguration();
+        brokerMarginBps = newMarginBps;
+        emit ConfigUpdated("brokerMargin", newMarginBps);
+    }
 
-        if (keyHash == keccak256("brokerMargin")) {
-            uint256 newMarginBps = abi.decode(paramValue, (uint256));
-            if (newMarginBps > 5000) revert InvalidConfiguration();
-            brokerMarginBps = newMarginBps;
-            emit ConfigUpdated(paramKey, newMarginBps);
+    function setBrokerWallet(address newWallet) external onlyOwner {
+        require(newWallet != address(0), "Invalid address");
+        brokerWallet = newWallet;
+        emit WalletUpdated("brokerWallet", newWallet);
+    }
 
-        } else if (keyHash == keccak256("brokerWallet")) {
-            address newWallet = abi.decode(paramValue, (address));
-            require(newWallet != address(0), "Invalid address");
-            brokerWallet = newWallet;
-            emit WalletUpdated(paramKey, newWallet);
+    function setUsersPoolWallet(address newWallet) external onlyOwner {
+        require(newWallet != address(0), "Invalid address");
+        usersPoolWallet = newWallet;
+        emit WalletUpdated("usersPoolWallet", newWallet);
+    }
 
-        } else if (keyHash == keccak256("usersPoolWallet")) {
-            address newWallet = abi.decode(paramValue, (address));
-            require(newWallet != address(0), "Invalid address");
-            usersPoolWallet = newWallet;
-            emit WalletUpdated(paramKey, newWallet);
+    function advancePhase() external onlyOwner {
+        require(currentPhase != Phase.SPECULATION, "Already at final phase");
+        currentPhase = Phase(uint8(currentPhase) + 1);
+        emit PhaseAdvanced(uint8(currentPhase));
+    }
 
-        } else if (keyHash == keccak256("phase")) {
-            uint8 newPhase = abi.decode(paramValue, (uint8));
-            require(newPhase > uint8(currentPhase), "Can only advance phase");
-            require(newPhase <= uint8(Phase.SPECULATION), "Invalid phase");
-            currentPhase = Phase(newPhase);
-            emit PhaseAdvanced(newPhase);
-
-        } else if (keyHash == keccak256("paused")) {
-            bool newPaused = abi.decode(paramValue, (bool));
-            paused = newPaused;
-            emit MarketPaused(newPaused);
-
-        } else {
-            revert InvalidConfiguration();
-        }
-
-        emit BrokerContractUpdated(paramKey);
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit MarketPaused(_paused);
     }
 
     // ============ View Functions ============
 
-    /**
-     * @dev Get current market phase as string
-     */
     function getPhaseString() external view returns (string memory) {
         if (currentPhase == Phase.UTILITY) return "UTILITY";
         if (currentPhase == Phase.FORWARDS) return "FORWARDS";
@@ -416,10 +354,11 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         return "SPECULATION";
     }
 
-    /**
-     * @dev Get total segments created
-     */
     function totalSegments() external view returns (uint256) {
         return nextSegmentId;
+    }
+
+    function getImplementation() external view returns (address) {
+        return _getImplementation();
     }
 }
