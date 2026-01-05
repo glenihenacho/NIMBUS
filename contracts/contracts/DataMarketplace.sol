@@ -78,10 +78,11 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         uint256 brokerSpread
     );
 
-    event ConfigUpdated(string param, uint256 value);
-    event WalletUpdated(string param, address wallet);
-    event PhaseAdvanced(Phase newPhase);
+    event ConfigUpdated(string indexed paramKey, uint256 value);
+    event WalletUpdated(string indexed paramKey, address wallet);
+    event PhaseAdvanced(uint8 newPhase);
     event MarketPaused(bool paused);
+    event BrokerContractUpdated(string indexed paramKey);
 
     // Errors
     error MarketPaused();
@@ -266,52 +267,63 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         segments[segmentId].askPrice = newAskPrice;
     }
 
-    // ============ Governance Functions (Owner Only) ============
+    // ============ Governance Function (Owner Only) ============
 
     /**
-     * @dev Update broker margin percentage
-     * @param newMarginBps New margin in basis points (max 5000 = 50%)
+     * @dev Unified governance function to update broker contract parameters
+     * Matches HANDOFF spec: updateBrokerContract(paramKey, paramValue)
+     *
+     * Supported paramKeys:
+     *   - "brokerMargin": uint256 in basis points (max 5000 = 50%)
+     *   - "brokerWallet": address for broker revenue
+     *   - "usersPoolWallet": address for provider payouts
+     *   - "phase": uint8 to advance phase (1→2→3→4)
+     *   - "paused": bool for emergency pause
+     *
+     * @param paramKey The parameter to update
+     * @param paramValue ABI-encoded value for the parameter
      */
-    function updateBrokerMargin(uint256 newMarginBps) external onlyOwner {
-        if (newMarginBps > 5000) revert InvalidConfiguration();
-        brokerMarginBps = newMarginBps;
-        emit ConfigUpdated("brokerMarginBps", newMarginBps);
-    }
+    function updateBrokerContract(
+        string calldata paramKey,
+        bytes calldata paramValue
+    ) external onlyOwner {
+        bytes32 keyHash = keccak256(bytes(paramKey));
 
-    /**
-     * @dev Update broker wallet address
-     */
-    function updateBrokerWallet(address newWallet) external onlyOwner {
-        require(newWallet != address(0), "Invalid address");
-        brokerWallet = newWallet;
-        emit WalletUpdated("brokerWallet", newWallet);
-    }
+        if (keyHash == keccak256("brokerMargin")) {
+            uint256 newMarginBps = abi.decode(paramValue, (uint256));
+            if (newMarginBps > 5000) revert InvalidConfiguration();
+            brokerMarginBps = newMarginBps;
+            emit ConfigUpdated(paramKey, newMarginBps);
 
-    /**
-     * @dev Update users pool wallet address
-     */
-    function updateUsersPoolWallet(address newWallet) external onlyOwner {
-        require(newWallet != address(0), "Invalid address");
-        usersPoolWallet = newWallet;
-        emit WalletUpdated("usersPoolWallet", newWallet);
-    }
+        } else if (keyHash == keccak256("brokerWallet")) {
+            address newWallet = abi.decode(paramValue, (address));
+            require(newWallet != address(0), "Invalid address");
+            brokerWallet = newWallet;
+            emit WalletUpdated(paramKey, newWallet);
 
-    /**
-     * @dev Advance to next market phase
-     * Phase progression: UTILITY -> FORWARDS -> SYNTHETICS -> SPECULATION
-     */
-    function advancePhase() external onlyOwner {
-        require(currentPhase != Phase.SPECULATION, "Already at final phase");
-        currentPhase = Phase(uint8(currentPhase) + 1);
-        emit PhaseAdvanced(currentPhase);
-    }
+        } else if (keyHash == keccak256("usersPoolWallet")) {
+            address newWallet = abi.decode(paramValue, (address));
+            require(newWallet != address(0), "Invalid address");
+            usersPoolWallet = newWallet;
+            emit WalletUpdated(paramKey, newWallet);
 
-    /**
-     * @dev Emergency pause/unpause
-     */
-    function setPaused(bool _paused) external onlyOwner {
-        paused = _paused;
-        emit MarketPaused(_paused);
+        } else if (keyHash == keccak256("phase")) {
+            uint8 newPhase = abi.decode(paramValue, (uint8));
+            require(newPhase > uint8(currentPhase), "Can only advance phase");
+            require(newPhase <= uint8(Phase.SPECULATION), "Invalid phase");
+            currentPhase = Phase(newPhase);
+            emit PhaseAdvanced(newPhase);
+
+        } else if (keyHash == keccak256("paused")) {
+            bool newPaused = abi.decode(paramValue, (bool));
+            paused = newPaused;
+            emit MarketPaused(newPaused);
+
+        } else {
+            revert InvalidConfiguration();
+        }
+
+        emit BrokerContractUpdated(paramKey);
     }
 
     // ============ View Functions ============

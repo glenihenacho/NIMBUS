@@ -188,56 +188,96 @@ describe("DataMarketplace", function () {
     });
   });
 
-  describe("Governance", function () {
-    it("Should update broker margin", async function () {
-      await marketplace.updateBrokerMargin(2000);
+  describe("Governance - updateBrokerContract()", function () {
+    it("Should update broker margin via unified function", async function () {
+      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [2000]);
+      await marketplace.updateBrokerContract("brokerMargin", encoded);
       expect(await marketplace.brokerMarginBps()).to.equal(2000);
     });
 
     it("Should reject margin > 50%", async function () {
+      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [5001]);
       await expect(
-        marketplace.updateBrokerMargin(5001)
+        marketplace.updateBrokerContract("brokerMargin", encoded)
       ).to.be.revertedWithCustomError(marketplace, "InvalidConfiguration");
     });
 
-    it("Should update broker wallet", async function () {
+    it("Should update broker wallet via unified function", async function () {
       const newBroker = consumer.address;
-      await marketplace.updateBrokerWallet(newBroker);
+      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["address"], [newBroker]);
+      await marketplace.updateBrokerContract("brokerWallet", encoded);
       expect(await marketplace.brokerWallet()).to.equal(newBroker);
     });
 
-    it("Should advance phase", async function () {
-      expect(await marketplace.getPhaseString()).to.equal("UTILITY");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("FORWARDS");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("SYNTHETICS");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("SPECULATION");
-
-      await expect(marketplace.advancePhase()).to.be.revertedWith(
-        "Already at final phase"
-      );
+    it("Should update users pool wallet via unified function", async function () {
+      const newPool = consumer.address;
+      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["address"], [newPool]);
+      await marketplace.updateBrokerContract("usersPoolWallet", encoded);
+      expect(await marketplace.usersPoolWallet()).to.equal(newPool);
     });
 
-    it("Should pause and unpause", async function () {
-      await marketplace.setPaused(true);
+    it("Should advance phase via unified function", async function () {
+      expect(await marketplace.getPhaseString()).to.equal("UTILITY");
+
+      // Advance to FORWARDS (phase 1)
+      let encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [1]);
+      await marketplace.updateBrokerContract("phase", encoded);
+      expect(await marketplace.getPhaseString()).to.equal("FORWARDS");
+
+      // Advance to SYNTHETICS (phase 2)
+      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [2]);
+      await marketplace.updateBrokerContract("phase", encoded);
+      expect(await marketplace.getPhaseString()).to.equal("SYNTHETICS");
+
+      // Advance to SPECULATION (phase 3)
+      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [3]);
+      await marketplace.updateBrokerContract("phase", encoded);
+      expect(await marketplace.getPhaseString()).to.equal("SPECULATION");
+
+      // Cannot go past final phase
+      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [4]);
+      await expect(
+        marketplace.updateBrokerContract("phase", encoded)
+      ).to.be.revertedWith("Invalid phase");
+    });
+
+    it("Should reject phase regression", async function () {
+      // Advance to phase 2
+      let encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [2]);
+      await marketplace.updateBrokerContract("phase", encoded);
+
+      // Try to go back to phase 1
+      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint8"], [1]);
+      await expect(
+        marketplace.updateBrokerContract("phase", encoded)
+      ).to.be.revertedWith("Can only advance phase");
+    });
+
+    it("Should pause and unpause via unified function", async function () {
+      let encoded = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [true]);
+      await marketplace.updateBrokerContract("paused", encoded);
       expect(await marketplace.paused()).to.equal(true);
 
       await expect(
         marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE)
       ).to.be.revertedWithCustomError(marketplace, "MarketPaused");
 
-      await marketplace.setPaused(false);
+      encoded = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [false]);
+      await marketplace.updateBrokerContract("paused", encoded);
       await marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE);
     });
 
-    it("Should reject non-owner governance calls", async function () {
+    it("Should reject invalid paramKey", async function () {
+      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [100]);
       await expect(
-        marketplace.connect(consumer).updateBrokerMargin(2000)
+        marketplace.updateBrokerContract("invalidKey", encoded)
+      ).to.be.revertedWithCustomError(marketplace, "InvalidConfiguration");
+    });
+
+    it("Should reject non-owner governance calls", async function () {
+      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [2000]);
+      await expect(
+        marketplace.connect(consumer).updateBrokerContract("brokerMargin", encoded)
       ).to.be.revertedWithCustomError(marketplace, "OwnableUnauthorizedAccount");
     });
   });
