@@ -299,10 +299,13 @@ This is a user acquisition cost—users should never pay gas.
 
 ### Phase 1: Browser Infrastructure + Custodial Wallet
 
-1. **Browser engine: Tauri (recommended)**
-   - Tauri (Rust + web) for cross-platform (Windows/Mac/Linux)
-   - Lighter than Electron, better for privacy
-   - Local data storage via SQLite/tauri-fs
+1. **Browser engine: Ungoogled-Chromium fork (recommended)**
+   - Fork of Chromium with all Google integration removed
+   - Privacy-first (no telemetry, no tracking)
+   - Full browser experience: tabs, bookmarks, history, extensions
+   - Cross-platform (Windows/Mac/Linux)
+   - Fast, reliable, familiar UX
+   - Local data storage via SQLite (encrypted)
 
 2. **Custodial wallet module**
    - Generate ed25519 keypair on signup
@@ -460,5 +463,6 @@ User sees: "Earned 15 PAT"
 - Fixed withdrawal address (set at signup, never changes)
 - No gas fees for users (Wyoming DAO LLC covers via relayer)
 - Data flow: Browser (track) → AI Ingestion (analyze) → Marketplace (sell) → Smart Contract (pay)
-- Implementation: Tauri (Rust) + ethers.js + SQLite for local storage
+- Implementation: Ungoogled-Chromium fork + ethers.js + SQLite for local storage + custodial wallet
 - Smart contract functions: `recordPayout()`, `withdrawEarnings()`, event listening
+- Privacy-first: No Google telemetry, local-only behavior data, encrypted storage
