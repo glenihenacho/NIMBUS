@@ -127,18 +127,27 @@ buySegment(segmentId):
 ```
 
 **Governance Function (Owner-only):**
-```
-updateBrokerContract(paramKey, paramValue):
-  // Can update:
-  ├─ brokerMargin: 0.25 (adjust global percentage)
-  ├─ brokerWallet: newAddress (transfer funds recipient)
-  ├─ usersPoolWallet: newAddress (update provider payout recipient)
-  ├─ phase: 1→2→3→4 (progress through phases)
-  └─ paused: true/false (emergency pause)
+```solidity
+updateBrokerContract(address newBrokerContractAddress):
+  // Atomically migrate to new broker contract implementation
+  ├─ Verify new contract address is valid
+  ├─ Migrate all segment registry + state
+  ├─ Update all references to point to new contract
+  ├─ Emit BrokerContractUpdated(oldAddress, newAddress)
+  └─ Only callable by Wyoming DAO LLC (owner)
 
-  // Emits event and updates immediately
-  // Only callable by broker/contract owner
+  // New contract inherits all existing state + segment data
+  // Allows for parameter updates, bug fixes, and feature additions
+  // without redeploying entire system
 ```
+
+**Broker contract can be upgraded to:**
+- Adjust `brokerMargin` (0.30 → 0.25)
+- Update wallet addresses (broker, user pool)
+- Advance phase progression (1→2→3→4)
+- Add emergency pause mechanism
+- Fix bugs or optimize gas
+- Add new features (call/put issuance, etc.)
 
 **Why this matters:**
 - **No waiting period** – Spread earned immediately on settlement
@@ -184,12 +193,12 @@ updateBrokerContract(paramKey, paramValue):
      - Calculates userPayout = ASK - brokerSpread
      - Transfers both amounts simultaneously + grants access rights
    - **No intermediate states:** All settle together or transaction reverts
-   - **Governance function:** `updateBrokerContract(paramKey, paramValue)`
-     - Update brokerMargin without redeployment
-     - Update wallet addresses (broker, user pool)
-     - Advance phase progression (1→2→3→4)
-     - Emergency pause mechanism
+   - **Governance function:** `updateBrokerContract(address newBrokerContractAddress)`
+     - Atomically migrate to new broker contract implementation
+     - All state + segment registry migrated to new contract
+     - Allows parameter updates (margin, wallets, phase) without system redeployment
      - Owner-only callable (Wyoming DAO LLC)
+     - Emits `BrokerContractUpdated(oldAddress, newAddress)` event
    - Access rights registration (who owns rights to which segments, backed by smart contract)
    - Phase-gated derivative enablement (Phase 3+ requires governance call)
 
