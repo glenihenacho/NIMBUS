@@ -15,11 +15,6 @@ describe("DataMarketplace", function () {
   const BROKER_MARGIN_BPS = 3000; // 30%
   const SEGMENT_PRICE = ethers.parseEther("100"); // 100 PAT
 
-  async function getBlockTimestamp(): Promise<bigint> {
-    const block = await ethers.provider.getBlock("latest");
-    return BigInt(block!.timestamp);
-  }
-
   beforeEach(async function () {
     [owner, broker, provider, consumer, usersPool] = await ethers.getSigners();
 

@@ -27,27 +27,39 @@ intelligent web agents and high‑quality data exchange:
 
 ## Repository Structure
 
-This repository contains Markdown documents for each pillar.  These documents
-outline design goals, technical requirements, suggested tools and next steps.
+```
+NIMBUS/
+├── contracts/                 # Smart contracts (Solidity + Hardhat)
+│   ├── contracts/
+│   │   ├── PAT.sol           # ERC-20 token with vesting
+│   │   └── DataMarketplace.sol  # UUPS upgradeable marketplace
+│   └── test/                 # Contract test suite
+├── browser/                  # AI browser agent (Python + Playwright)
+│   └── src/
+│       ├── agent.py          # Browser automation agent
+│       ├── qwen_client.py    # Qwen LLM API client
+│       └── marketplace_client.py  # Marketplace API client
+├── pat_coin_launch.md        # Token launch plan and tokenomics
+├── ai_browser_ingestion.md   # Browser architecture spec
+├── data_performance_marketplace.md  # Marketplace design doc
+└── whitepaper_outline.md     # Investor whitepaper outline
+```
 
-- [`pat_coin_launch.md`](pat_coin_launch.md) – technical and strategic plan for
-  the PAT coin (ERC‑20) launch, including tokenomics, smart contract
-  implementation, compliance and marketing.
-- [`ai_browser_ingestion.md`](ai_browser_ingestion.md) – architecture and
-  implementation guide for building the AI‑powered browser agent used for
-  ingesting web data.
-- [`data_performance_marketplace.md`](data_performance_marketplace.md) – concept
-  and design document for building a data performance marketplace, including
-  guidelines for data quality, governance and platform features.
-- [`whitepaper_outline.md`](whitepaper_outline.md) – investor‑ and builder‑grade
-  outline for a comprehensive whitepaper, covering market architecture, token
-  design, incentive mechanisms and the phased roadmap to build data markets.
+### Quick Start
 
-### Priorities
+**Smart Contracts:**
+```bash
+cd contracts
+npm install
+npx hardhat test
+```
 
-The most immediate priority for this project is the PAT coin launch.  The
-documentation in `pat_coin_launch.md` provides a high‑level roadmap and
-technical details needed to begin development.
+**Browser Agent:**
+```bash
+cd browser
+pip install -r requirements.txt
+python -m src.agent
+```
 
 ## Contributing
 

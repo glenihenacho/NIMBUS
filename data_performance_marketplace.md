@@ -234,15 +234,17 @@ usersPoolWallet: 0x...    // Provider payout pool
 phase: 1                  // Current market phase (1-4)
 ```
 
-**Governance Function (owner-only):**
+**Governance Functions (owner-only):**
 ```
-updateBrokerContract(paramKey, paramValue):
-  ├─ brokerMargin: adjust global percentage
-  ├─ brokerWallet: update revenue recipient
-  ├─ usersPoolWallet: update provider payout recipient
-  ├─ phase: progress through 1→2→3→4
-  └─ paused: emergency pause mechanism
+updateBrokerContract(address newImplementation)  // UUPS upgrade
+setBrokerMargin(uint256 newMarginBps)            // Adjust margin (max 50%)
+setBrokerWallet(address newWallet)               // Update revenue recipient
+setUsersPoolWallet(address newWallet)            // Update provider pool
+advancePhase()                                   // Progress 1→2→3→4
+setPaused(bool paused)                           // Emergency pause
 ```
+
+See `contracts/contracts/DataMarketplace.sol` for implementation.
 
 ### Risk Controls
 
@@ -297,21 +299,22 @@ options/calls/puts to all participants.  Phase 4 launch requires governance vote
 4. **Proven model** – Bloomberg, Refinitiv, and major data vendors operate similarly
 5. **Controlled rollout** – Broker decides Phase 3-4 timing based on market stability
 
-## 9. Next Steps for Developers
+## 9. Implementation Status
 
-1. **Define product requirements** – Gather user stories from data providers and
-   consumers, including necessary metadata fields and performance metrics.
-2. **Design the data model** – Create database schemas for datasets, users,
-   transactions and reviews.  Include fields for quality and performance metrics.
-3. **Implement a prototype** – Build an MVP that allows providers to upload
-   dataset metadata and files, and consumers to browse and purchase using PAT.
-4. **Develop quality evaluation tools** – Write scripts to compute
-   completeness, timeliness and consistency metrics upon dataset upload.
-5. **Integrate PAT token** – Use smart contracts or backend logic to accept
-   PAT tokens for purchases and distribute payments to providers.
-6. **Security & compliance** – Implement role‑based access control, audit
-   logging, encryption and data privacy features.
-7. **Iterate & expand** – Add rating systems, analytics dashboards and APIs for
-   integration with the AI browser and other applications.
+**Completed:**
+- ✅ Smart contracts: `contracts/contracts/DataMarketplace.sol` (UUPS upgradeable)
+- ✅ PAT token: `contracts/contracts/PAT.sol`
+- ✅ Atomic settlement with earnings tracking
+- ✅ Phase progression system (1-4)
+- ✅ Test suite: `contracts/test/DataMarketplace.test.ts`
 
-Track progress via issues and update this document as the marketplace evolves.
+**In Progress:**
+- Browser integration with smart contract events
+- Marketplace API for segment submission
+
+**Planned:**
+- Frontend UI for browsing and purchasing segments
+- Analytics dashboard for providers
+- Quality evaluation automation
+
+See `contracts/` directory for smart contract implementation.

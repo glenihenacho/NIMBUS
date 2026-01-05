@@ -8,14 +8,14 @@ that are packaged as data segments for the PAT marketplace.
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional
-from playwright.async_api import async_playwright, Page, Browser
+from playwright.async_api import async_playwright, Browser
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+from .qwen_client import QwenAPIClient
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,63 +84,6 @@ class DataSegment:
         }
 
 
-class QwenClient:
-    """
-    Client for Qwen LLM API
-
-    In production, this would connect to Qwen's API.
-    For the prototype, we simulate intent detection.
-    """
-
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
-        logger.info("Initialized Qwen client")
-
-    async def analyze_page(self, page_content: str, url: str) -> list[IntentSignal]:
-        """
-        Analyze page content to detect intent signals
-
-        In production, this sends the content to Qwen for analysis.
-        The model identifies:
-        - Purchase intent (product pages, cart, checkout)
-        - Research intent (comparison pages, reviews)
-        - Engagement signals (time on page, scroll depth)
-        """
-        signals = []
-
-        # Simulate Qwen analysis (in production, call Qwen API)
-        # Detection heuristics based on URL patterns and content
-
-        if any(kw in url.lower() for kw in ["product", "buy", "shop", "cart"]):
-            signals.append(IntentSignal(
-                type=IntentType.PURCHASE_INTENT,
-                confidence=0.85,
-                url=url,
-                timestamp=datetime.utcnow(),
-                metadata={"source": "url_pattern", "keywords": ["product", "buy"]}
-            ))
-
-        if any(kw in url.lower() for kw in ["compare", "review", "vs"]):
-            signals.append(IntentSignal(
-                type=IntentType.COMPARISON_INTENT,
-                confidence=0.75,
-                url=url,
-                timestamp=datetime.utcnow(),
-                metadata={"source": "url_pattern", "keywords": ["compare", "review"]}
-            ))
-
-        if any(kw in url.lower() for kw in ["article", "blog", "learn", "guide"]):
-            signals.append(IntentSignal(
-                type=IntentType.RESEARCH_INTENT,
-                confidence=0.70,
-                url=url,
-                timestamp=datetime.utcnow(),
-                metadata={"source": "url_pattern", "keywords": ["article", "learn"]}
-            ))
-
-        return signals
-
-
 class BrowserAgent:
     """
     AI Browser Agent for collecting web browsing intent signals
@@ -148,7 +91,7 @@ class BrowserAgent:
     Uses Playwright for browser automation and Qwen for intent analysis.
     """
 
-    def __init__(self, qwen_client: QwenClient):
+    def __init__(self, qwen_client: QwenAPIClient):
         self.qwen = qwen_client
         self.browser: Optional[Browser] = None
         self.collected_signals: list[IntentSignal] = []
@@ -165,6 +108,23 @@ class BrowserAgent:
         if self.browser:
             await self.browser.close()
             logger.info("Browser stopped")
+
+    def _convert_intents(self, intents: list[dict], url: str) -> list[IntentSignal]:
+        """Convert Qwen API response to IntentSignal objects"""
+        signals = []
+        for intent in intents:
+            try:
+                intent_type = IntentType(intent["type"])
+                signals.append(IntentSignal(
+                    type=intent_type,
+                    confidence=intent.get("confidence", 0.5),
+                    url=url,
+                    timestamp=datetime.utcnow(),
+                    metadata={"evidence": intent.get("evidence", "")}
+                ))
+            except (KeyError, ValueError) as e:
+                logger.warning(f"Skipping invalid intent: {e}")
+        return signals
 
     async def navigate_and_analyze(self, url: str) -> list[IntentSignal]:
         """
@@ -186,7 +146,8 @@ class BrowserAgent:
             logger.info(f"Page loaded: {title}")
 
             # Analyze with Qwen
-            signals = await self.qwen.analyze_page(content, url)
+            result = await self.qwen.analyze_page_content(url, content)
+            signals = self._convert_intents(result.get("intents", []), url)
 
             # Store collected signals
             self.collected_signals.extend(signals)
@@ -265,7 +226,7 @@ async def main():
     """Example usage of the browser agent"""
 
     # Initialize components
-    qwen = QwenClient()
+    qwen = QwenAPIClient()
     agent = BrowserAgent(qwen)
 
     try:
@@ -306,6 +267,7 @@ async def main():
 
     finally:
         await agent.stop()
+        await qwen.close()
 
 
 if __name__ == "__main__":

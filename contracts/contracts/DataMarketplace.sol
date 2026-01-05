@@ -53,15 +53,16 @@ contract DataMarketplace is
         NAVIGATION_INTENT
     }
 
-    // Segment data (minimal storage)
+    // Segment data (gas-optimized storage packing)
     struct Segment {
-        SegmentType segmentType;
-        uint256 windowDays;          // Time window in days (e.g., 7)
-        uint256 confidenceBps;       // Confidence score in bps (e.g., 7500 = 75%)
-        uint256 askPrice;            // ASK price in PAT (wei)
-        address provider;            // Original data provider
-        bool active;                 // Segment available for purchase
-        uint256 createdAt;           // Timestamp
+        address provider;            // 20 bytes - Original data provider
+        SegmentType segmentType;     // 1 byte
+        uint8 windowDays;            // 1 byte - Time window in days (max 30)
+        uint16 confidenceBps;        // 2 bytes - Confidence score in bps (max 10000)
+        bool active;                 // 1 byte - Segment available for purchase
+        // --- slot boundary ---
+        uint256 askPrice;            // 32 bytes - ASK price in PAT (wei)
+        uint256 createdAt;           // 32 bytes - Timestamp
     }
 
     // Segment registry
@@ -104,8 +105,8 @@ contract DataMarketplace is
         uint256 timestamp
     );
 
-    event ConfigUpdated(string indexed paramKey, uint256 value);
-    event WalletUpdated(string indexed paramKey, address wallet);
+    event ConfigUpdated(bytes32 indexed paramKey, uint256 value);
+    event WalletUpdated(bytes32 indexed paramKey, address wallet);
     event PhaseAdvanced(uint8 newPhase);
     event MarketPaused(bool paused);
 
@@ -118,8 +119,12 @@ contract DataMarketplace is
     error AlreadyHasAccess();
     error InsufficientAllowance();
     error InvalidConfiguration();
-    error PhaseNotAllowed();
     error InsufficientEarnings();
+
+    // Event keys (gas-optimized)
+    bytes32 private constant KEY_BROKER_MARGIN = "brokerMargin";
+    bytes32 private constant KEY_BROKER_WALLET = "brokerWallet";
+    bytes32 private constant KEY_USERS_POOL = "usersPoolWallet";
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -180,8 +185,8 @@ contract DataMarketplace is
      */
     function createSegment(
         SegmentType _type,
-        uint256 _windowDays,
-        uint256 _confidenceBps,
+        uint8 _windowDays,
+        uint16 _confidenceBps,
         uint256 _askPrice
     ) external returns (uint256 segmentId) {
         if (paused) revert MarketPaused();
@@ -192,12 +197,12 @@ contract DataMarketplace is
         segmentId = nextSegmentId++;
 
         segments[segmentId] = Segment({
+            provider: msg.sender,
             segmentType: _type,
             windowDays: _windowDays,
             confidenceBps: _confidenceBps,
-            askPrice: _askPrice,
-            provider: msg.sender,
             active: true,
+            askPrice: _askPrice,
             createdAt: block.timestamp
         });
 
@@ -256,8 +261,8 @@ contract DataMarketplace is
 
     function getSegment(uint256 segmentId) external view returns (
         SegmentType segmentType,
-        uint256 windowDays,
-        uint256 confidenceBps,
+        uint8 windowDays,
+        uint16 confidenceBps,
         uint256 askPrice,
         address provider,
         bool active,
@@ -319,19 +324,19 @@ contract DataMarketplace is
     function setBrokerMargin(uint256 newMarginBps) external onlyOwner {
         if (newMarginBps > 5000) revert InvalidConfiguration();
         brokerMarginBps = newMarginBps;
-        emit ConfigUpdated("brokerMargin", newMarginBps);
+        emit ConfigUpdated(KEY_BROKER_MARGIN, newMarginBps);
     }
 
     function setBrokerWallet(address newWallet) external onlyOwner {
         require(newWallet != address(0), "Invalid address");
         brokerWallet = newWallet;
-        emit WalletUpdated("brokerWallet", newWallet);
+        emit WalletUpdated(KEY_BROKER_WALLET, newWallet);
     }
 
     function setUsersPoolWallet(address newWallet) external onlyOwner {
         require(newWallet != address(0), "Invalid address");
         usersPoolWallet = newWallet;
-        emit WalletUpdated("usersPoolWallet", newWallet);
+        emit WalletUpdated(KEY_USERS_POOL, newWallet);
     }
 
     function advancePhase() external onlyOwner {
