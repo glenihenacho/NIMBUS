@@ -15,6 +15,12 @@ describe("DataMarketplace", function () {
   const BROKER_MARGIN_BPS = 3000; // 30%
   const SEGMENT_PRICE = ethers.parseEther("100"); // 100 PAT
 
+  // Helper to get current block timestamp
+  async function getBlockTimestamp(): Promise<bigint> {
+    const block = await ethers.provider.getBlock("latest");
+    return BigInt(block!.timestamp);
+  }
+
   beforeEach(async function () {
     [owner, broker, provider, consumer, usersPool] = await ethers.getSigners();
 
@@ -109,10 +115,10 @@ describe("DataMarketplace", function () {
       );
     });
 
-    it("Should atomically settle purchase", async function () {
-      const providerBalanceBefore = await pat.balanceOf(provider.address);
+    it("Should atomically settle purchase and record earnings", async function () {
       const brokerBalanceBefore = await pat.balanceOf(broker.address);
       const consumerBalanceBefore = await pat.balanceOf(consumer.address);
+      const providerEarningsBefore = await marketplace.userEarnings(provider.address);
 
       // Calculate expected split
       const expectedBrokerSpread = (SEGMENT_PRICE * BigInt(BROKER_MARGIN_BPS)) / 10000n;
@@ -132,19 +138,76 @@ describe("DataMarketplace", function () {
           expectedBrokerSpread
         );
 
-      // Verify balances
-      expect(await pat.balanceOf(provider.address)).to.equal(
-        providerBalanceBefore + expectedProviderPayout
+      // Verify PayoutRecorded event
+      await expect(tx)
+        .to.emit(marketplace, "PayoutRecorded")
+        .withArgs(provider.address, expectedProviderPayout, 0, await getBlockTimestamp());
+
+      // Provider earnings recorded (not transferred yet)
+      expect(await marketplace.userEarnings(provider.address)).to.equal(
+        providerEarningsBefore + expectedProviderPayout
       );
+
+      // Broker receives spread immediately
       expect(await pat.balanceOf(broker.address)).to.equal(
         brokerBalanceBefore + expectedBrokerSpread
       );
+
+      // Consumer paid ASK
       expect(await pat.balanceOf(consumer.address)).to.equal(
         consumerBalanceBefore - SEGMENT_PRICE
       );
 
       // Verify access granted
       expect(await marketplace.hasAccess(consumer.address, 0)).to.equal(true);
+    });
+
+    it("Should allow provider to withdraw earnings", async function () {
+      // Buy segment first
+      await marketplace.connect(consumer).buySegment(0);
+
+      const expectedBrokerSpread = (SEGMENT_PRICE * BigInt(BROKER_MARGIN_BPS)) / 10000n;
+      const expectedProviderPayout = SEGMENT_PRICE - expectedBrokerSpread;
+
+      // Check earnings recorded
+      expect(await marketplace.userEarnings(provider.address)).to.equal(expectedProviderPayout);
+
+      // Provider withdraws earnings
+      const providerBalanceBefore = await pat.balanceOf(provider.address);
+      const tx = await marketplace.connect(provider).withdrawEarnings(expectedProviderPayout);
+
+      await expect(tx).to.emit(marketplace, "Withdrawal");
+
+      // Verify balance transferred
+      expect(await pat.balanceOf(provider.address)).to.equal(
+        providerBalanceBefore + expectedProviderPayout
+      );
+
+      // Earnings now zero
+      expect(await marketplace.userEarnings(provider.address)).to.equal(0);
+    });
+
+    it("Should allow withdrawAllEarnings", async function () {
+      // Buy segment
+      await marketplace.connect(consumer).buySegment(0);
+
+      const expectedBrokerSpread = (SEGMENT_PRICE * BigInt(BROKER_MARGIN_BPS)) / 10000n;
+      const expectedProviderPayout = SEGMENT_PRICE - expectedBrokerSpread;
+
+      // Provider withdraws all
+      const providerBalanceBefore = await pat.balanceOf(provider.address);
+      await marketplace.connect(provider).withdrawAllEarnings();
+
+      expect(await pat.balanceOf(provider.address)).to.equal(
+        providerBalanceBefore + expectedProviderPayout
+      );
+      expect(await marketplace.userEarnings(provider.address)).to.equal(0);
+    });
+
+    it("Should reject withdrawal with insufficient earnings", async function () {
+      await expect(
+        marketplace.connect(provider).withdrawEarnings(ethers.parseEther("1000"))
+      ).to.be.revertedWithCustomError(marketplace, "InsufficientEarnings");
     });
 
     it("Should calculate split correctly", async function () {

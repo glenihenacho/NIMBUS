@@ -61,6 +61,10 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
     // Access rights: consumer => segmentId => hasAccess
     mapping(address => mapping(uint256 => bool)) public accessRights;
 
+    // User earnings tracking (for custodial wallet model)
+    // Users accumulate earnings and claim via withdrawEarnings()
+    mapping(address => uint256) public userEarnings;
+
     // Events
     event SegmentCreated(
         uint256 indexed segmentId,
@@ -78,6 +82,20 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         uint256 brokerSpread
     );
 
+    // User payout events (for browser to listen)
+    event PayoutRecorded(
+        address indexed user,
+        uint256 amount,
+        uint256 indexed segmentId,
+        uint256 timestamp
+    );
+
+    event Withdrawal(
+        address indexed user,
+        uint256 amount,
+        uint256 timestamp
+    );
+
     event ConfigUpdated(string indexed paramKey, uint256 value);
     event WalletUpdated(string indexed paramKey, address wallet);
     event PhaseAdvanced(uint8 newPhase);
@@ -91,6 +109,7 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
     error InsufficientAllowance();
     error InvalidConfiguration();
     error PhaseNotAllowed();
+    error InsufficientEarnings();
 
     constructor(
         address _patToken,
@@ -170,22 +189,19 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         }
 
         // ============ ATOMIC SETTLEMENT ============
-        // All three transfers happen in one transaction
+        // All operations happen in one transaction
         // If any fails, entire transaction reverts
 
-        // 1. Consumer pays ASK to this contract (temporary)
+        // 1. Consumer pays ASK to this contract
         require(
             patToken.transferFrom(msg.sender, address(this), askPrice),
             "Transfer from consumer failed"
         );
 
-        // 2. Provider receives BID (payout)
-        require(
-            patToken.transfer(provider, providerPayout),
-            "Transfer to provider failed"
-        );
+        // 2. Record provider earnings (claimable via withdrawEarnings)
+        _recordPayout(provider, providerPayout, segmentId);
 
-        // 3. Broker receives spread
+        // 3. Broker receives spread immediately
         require(
             patToken.transfer(brokerWallet, brokerSpread),
             "Transfer to broker failed"
@@ -265,6 +281,68 @@ contract DataMarketplace is Ownable, ReentrancyGuard {
         require(segments[segmentId].provider == msg.sender, "Not provider");
         require(newAskPrice > 0, "Invalid price");
         segments[segmentId].askPrice = newAskPrice;
+    }
+
+    // ============ User Earnings & Withdrawal ============
+
+    /**
+     * @dev Record payout for a user (internal)
+     * Called during atomic settlement to track earnings
+     * @param user The user to credit
+     * @param amount The PAT amount earned
+     * @param segmentId The segment that generated earnings
+     */
+    function _recordPayout(
+        address user,
+        uint256 amount,
+        uint256 segmentId
+    ) internal {
+        userEarnings[user] += amount;
+        emit PayoutRecorded(user, amount, segmentId, block.timestamp);
+    }
+
+    /**
+     * @dev Withdraw accumulated earnings
+     * Called by user (or relayer on behalf of user for auto-claims)
+     * Gas fees covered by Wyoming DAO LLC via relayer service
+     * @param amount The amount to withdraw
+     */
+    function withdrawEarnings(uint256 amount) external nonReentrant {
+        if (userEarnings[msg.sender] < amount) revert InsufficientEarnings();
+
+        userEarnings[msg.sender] -= amount;
+
+        require(
+            patToken.transfer(msg.sender, amount),
+            "Withdrawal transfer failed"
+        );
+
+        emit Withdrawal(msg.sender, amount, block.timestamp);
+    }
+
+    /**
+     * @dev Withdraw all accumulated earnings
+     * Convenience function for auto-claim service
+     */
+    function withdrawAllEarnings() external nonReentrant {
+        uint256 amount = userEarnings[msg.sender];
+        if (amount == 0) revert InsufficientEarnings();
+
+        userEarnings[msg.sender] = 0;
+
+        require(
+            patToken.transfer(msg.sender, amount),
+            "Withdrawal transfer failed"
+        );
+
+        emit Withdrawal(msg.sender, amount, block.timestamp);
+    }
+
+    /**
+     * @dev Get user's current earnings balance
+     */
+    function getEarnings(address user) external view returns (uint256) {
+        return userEarnings[user];
     }
 
     // ============ Governance Function (Owner Only) ============
