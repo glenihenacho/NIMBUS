@@ -61,18 +61,42 @@ The **user-facing browser** is a Chrome/Firefox-like application that enables us
 
 ## Core Features
 
-### 1. Wallet Integration
-- **Supported wallets:** MetaMask, WalletConnect, Coinbase Wallet
-- **Network:** zkSync Era mainnet
-- **User flow:**
-  ```
-  Launch browser
-    → Connect wallet (one-time setup)
-    → Approve payout wallet address
-    → Wallet connected ✓
-  ```
-- **Persistent connection:** Wallet address stored locally (encrypted)
-- **Signature requests:** Only for payout authorization, not for browsing
+### 1. Custodial Embedded Wallet
+
+**Browser owns private keys locally; you (Wyoming DAO LLC) are the custodian.**
+
+**Onboarding (First Time):**
+```
+1. User launches browser
+2. Create account:
+   ├─ Set username
+   ├─ Set password
+   └─ Browser generates private key locally
+3. Derive public address from private key
+4. Set withdrawal wallet address (one-time, fixed)
+   └─ Where PAT payouts are sent
+5. Done - never asks again
+```
+
+**Local Storage (Encrypted):**
+- `encrypted_private_key` = AES-256-GCM(privateKey, PBKDF2(password))
+- `user_address` = public address derived from key
+- `withdrawal_wallet` = fixed address for payouts (never changes)
+- Only user's password can decrypt private key
+
+**User Experience:**
+- ✅ No MetaMask popups during normal use
+- ✅ No signature requests while browsing
+- ✅ Automatic nightly payouts (user doesn't do anything)
+- ✅ Manual claim option anytime (user clicks "Claim Now")
+
+**Password Recovery:**
+- User forgets password → Click "Forgot password"
+- Email verification → You generate new encrypted key
+- User sets new password → Browser re-encrypts and stores locally
+- Seamless recovery (no loss of address or earnings)
+
+**Network:** zkSync Era mainnet
 
 ### 2. Browsing Behavior Tracking
 - **What's tracked:**
@@ -98,30 +122,49 @@ Browser generates segment **candidates** when:
 
 Segments are created by AI analysis, not automatically.
 
-### 4. Real-Time Payout Notifications
-When a data segment (derived from user's behavior) is purchased:
+### 4. Automatic + Manual Payout Claims
 
+**Earnings accumulation:**
 ```
 Marketplace Smart Contract executes buySegment()
-  ├─ Sends BID payout to usersPoolWallet
-  ├─ Sends ASK spread to brokerWallet
-  └─ Emits PayoutEvent(segmentId, users, amount)
+  ├─ Sends 70 PAT (BID) → usersPoolWallet
+  ├─ Sends 30 PAT (spread) → brokerWallet
+  └─ Emits PayoutEvent(segmentId, amount)
 
-Browser listens for PayoutEvent on zkSync Era
-  → Notification: "Your browsing data earned 25 PAT"
-  → Display in browser UI
-  → Update total earned balance
+Smart contract tracks per-user earnings in mapping:
+  mapping(address => uint256) userEarnings
+
+Browser listens for PayoutEvent
+  → Update UI: "Your data earned 15 PAT"
+  → Add to balance: total earned = 15 PAT
 ```
 
-**Payout flow:**
+**Nightly Auto-Claim (Automatic):**
 ```
-Individual User A: 15 PAT ← From segment (pooled with other users)
-Individual User B: 10 PAT ← From same segment
-...
-usersPoolWallet receives: 70 PAT (BID from 100 PAT sale)
-  → Smart contract tracks per-user contribution
-  → Users claim earnings from pool
+Every night at 2 AM UTC:
+  1. Browser checks accumulated earnings
+  2. Calls withdrawEarnings(amount) automatically
+  3. Private key decrypted (using stored password)
+  4. Transaction signed + submitted to zkSync Era
+  5. PAT transferred to withdrawal_wallet
+  6. UI updates: "Claimed 45 PAT overnight"
 ```
+
+**Manual Claim (On-Demand):**
+```
+User sees: "Earnings: 127.50 PAT"
+User clicks: "Claim Now" button
+  ├─ Browser decrypts private key
+  ├─ Signs: withdrawEarnings(127.50) transaction
+  ├─ Submits to zkSync Era
+  └─ PAT arrives in withdrawal_wallet within seconds
+
+UI updates: "Earnings: 0 PAT" (reset after claim)
+```
+
+**No gas fees:** Wyoming DAO LLC covers gas for auto-claims and manual claims (cost of user acquisition).
+
+**Fixed withdrawal address:** All earnings go to same wallet address (set at signup, never changes).
 
 ---
 
@@ -131,52 +174,94 @@ usersPoolWallet receives: 70 PAT (BID from 100 PAT sale)
 ```
 1. Download PAT Browser
 2. Launch → Welcome screen
-3. Connect Web3 wallet
-   - Choose wallet provider
-   - Approve wallet connection
-   - Sign message (prove ownership)
-4. Approve payout address
-   - Confirm wallet address
-   - Understand privacy policy
-5. Start browsing
+3. Create account:
+   - Enter username
+   - Set password
+   - Browser generates private key locally (encrypted)
+4. Set withdrawal wallet address:
+   - Paste your zkSync Era wallet address (e.g., 0x123...)
+   - "PAT will be sent here automatically"
+   - Confirm (cannot be changed)
+5. Start browsing:
    - Browser begins tracking behavior
-   - Notify user: "Your browsing data is being collected"
+   - UI: "Your data is being collected and monetized"
+   - No further setup needed
 ```
 
 ### Daily Usage
 ```
-1. User browses normally (no ads, no popups interrupting)
-2. Browser collects behavior locally
-3. AI analysis periodically (nightly) detects intent signals
-4. Segments created and submitted to marketplace
-   - User sees notification: "New data segment created: PURCHASE_INTENT (7D, 0.75)"
-5. Consumer purchases segment at ASK price
-6. User receives notification: "Earned 15 PAT from browsing data sale"
-7. Payout accumulates in usersPoolWallet (smart contract)
-8. User can claim payouts anytime (withdrawal to wallet)
+1. User opens browser and browses normally
+   - No ads, no interruptions
+   - No wallet popups
+2. Browser collects behavior locally (encrypted)
+3. AI analysis (nightly) detects intent signals
+4. Data segments created and submitted to marketplace
+   - User sees notification: "New segment created: PURCHASE_INTENT (7D, 0.75)"
+5. Consumer purchases segment on marketplace
+6. Smart contract settles atomically:
+   - 70 PAT → usersPoolWallet
+   - 30 PAT → brokerWallet (your spread)
+7. Browser listens for PayoutEvent
+   - Notification: "Your data earned 15 PAT"
+   - Earnings balance increases: 15 PAT
+8. Every night at 2 AM UTC:
+   - Browser auto-claims accumulated earnings
+   - PAT automatically sent to withdrawal_wallet
+   - Notification: "Auto-claimed 45 PAT overnight"
 ```
 
-### Claim Earnings
+### Manual Claim (On-Demand)
 ```
-Browser UI: "Earnings: 127.5 PAT"
-User clicks "Claim" button
-  ↓
-Sign transaction (wallet approval required)
-  ↓
-User receives PAT in wallet
-  ↓
-Balance resets to 0
+User sees in dashboard:
+  Earnings: 127.50 PAT [Claim Now] button
+
+User clicks "Claim Now":
+  ├─ Browser decrypts private key (using password)
+  ├─ Signs: withdrawEarnings(127.50) transaction
+  ├─ Submits to zkSync Era
+  └─ PAT arrives in withdrawal_wallet (~15 seconds)
+
+Dashboard updates:
+  Earnings: 0 PAT
+
+History shows:
+  "Claimed 127.50 PAT at 3:45 PM"
 ```
 
 ---
 
 ## Smart Contract Integration
 
+### Smart Contract Functions
+
+**Earnings tracking (on-chain):**
+```solidity
+mapping(address => uint256) public userEarnings;
+
+function recordPayout(address user, uint256 amount) internal {
+    userEarnings[user] += amount;
+    emit PayoutRecorded(user, amount);
+}
+
+function withdrawEarnings(uint256 amount) external {
+    require(userEarnings[msg.sender] >= amount, "Insufficient balance");
+    userEarnings[msg.sender] -= amount;
+    PAT.transfer(msg.sender, amount);
+    emit Withdrawal(msg.sender, amount);
+}
+```
+
 ### Events Browser Listens For
 ```solidity
-event PayoutEvent(
+event PayoutRecorded(
+  address indexed user,
+  uint256 amount,
   bytes32 indexed segmentId,
-  address indexed usersPoolWallet,
+  uint256 timestamp
+);
+
+event Withdrawal(
+  address indexed user,
   uint256 amount,
   uint256 timestamp
 );
@@ -190,42 +275,54 @@ event SegmentCreated(
 );
 ```
 
-### Wallet Requirements
-- **Payout wallet address:** Where user receives PAT (can be different from connected wallet)
-- **Signing permissions:**
-  - Sign message (prove ownership, one-time)
-  - Approve withdrawal transactions (requires signature per claim)
-- **No gas fees for tracking:** Browser behavior tracking is off-chain, no transactions
+### Browser Claims (No Gas Fees)
+Wyoming DAO LLC covers all gas fees for:
+- **Auto-claim transactions** (every night)
+- **Manual claim transactions** (on-demand)
 
-### On-Chain Claims
-When user clicks "Claim," browser:
-1. Reads usersPoolWallet balance for user
-2. Prepares transaction: `withdrawEarnings(amount)`
-3. User signs transaction
-4. Transaction submitted to zkSync Era
-5. Earnings transferred to user's wallet
-6. Browser updates UI: balance = 0
+This is a user acquisition cost—users should never pay gas.
+
+**Implementation options:**
+- Option A: Relayer/keeper service signs transactions for users
+- Option B: Meta-transactions (EIP-2771) with sponsor
+- Option C: Flashbots Relay (MEV-free, sponsored gas)
+
+**Auto-claim mechanism:**
+- Nightly job reads user's `userEarnings[address]` balance
+- If balance > 0, calls `withdrawEarnings(balance)`
+- Relayer/keeper signs and submits
+- PAT arrives in withdrawal_wallet (user's fixed address)
 
 ---
 
 ## Implementation Priorities for Opus
 
-### Phase 1: Browser Infrastructure
-1. **Fork Chromium or use Tauri + Web technologies**
-   - Tauri (Rust + web) recommended for cross-platform (Windows/Mac/Linux)
-   - Lighter weight than Electron
-   - Better privacy (local data storage)
+### Phase 1: Browser Infrastructure + Custodial Wallet
 
-2. **Wallet connection module**
-   - Integrate ethers.js or web3.js
-   - Support MetaMask + WalletConnect injected provider
-   - Persist wallet address securely (encrypted local storage)
+1. **Browser engine: Tauri (recommended)**
+   - Tauri (Rust + web) for cross-platform (Windows/Mac/Linux)
+   - Lighter than Electron, better for privacy
+   - Local data storage via SQLite/tauri-fs
 
-3. **Local behavior tracking**
-   - Track tab activity (URL, time, title)
-   - Store in IndexedDB or local SQLite
-   - No PII collection (filter sensitive domains)
-   - No form input logging
+2. **Custodial wallet module**
+   - Generate ed25519 keypair on signup
+   - Encrypt private key: AES-256-GCM(key, PBKDF2(password, 100k iterations))
+   - Store encrypted key locally (never leaves device)
+   - Derive public address from private key
+   - Sign transactions using decrypted key
+
+3. **Account system**
+   - Username + password authentication (local)
+   - Password hashing: PBKDF2/bcrypt for stored credentials
+   - Password recovery: Email verification → regenerate encrypted key
+   - Withdrawal wallet address (immutable, set at signup)
+
+4. **Local behavior tracking**
+   - Track tab activity (URL, time spent, title)
+   - Store in local SQLite database
+   - No PII collection (filter sensitive domains: gmail.com, banking, etc.)
+   - No form input logging (except button clicks)
+   - Behavior data encrypted at rest
 
 ### Phase 2: AI Integration Bridge
 1. **Data export pipeline**
@@ -237,22 +334,33 @@ When user clicks "Claim," browser:
    - Subscribe to marketplace API: "segments created from my data"
    - Display in browser UI
 
-### Phase 3: Smart Contract Integration
+### Phase 3: Smart Contract Integration + Auto-Claims
 1. **zkSync Era RPC connection**
    - Connect to zkSync Era mainnet
-   - Listen for PayoutEvent emissions
-   - Filter events for connected wallet address
+   - Listen for `PayoutRecorded` events
+   - Filter events for user's address
+   - Track off-chain balance (accumulate earnings)
 
 2. **Real-time notifications**
    - Show payout alerts in browser
    - Update earnings balance UI
-   - Trigger sound/desktop notification (optional)
+   - Trigger desktop notification (optional)
 
-3. **Claim functionality**
-   - Read usersPoolWallet balance
-   - Sign withdrawal transaction
-   - Submit to smart contract
+3. **Manual claim functionality**
+   - User clicks "Claim Now" button
+   - Browser decrypts private key (user enters password again)
+   - Sign: `withdrawEarnings(amount)` transaction
+   - Submit to zkSync Era
    - Update UI on confirmation
+   - Show transaction hash/receipt
+
+4. **Automatic nightly claims**
+   - Nightly job (2 AM UTC) triggered by OS scheduler
+   - Read accumulated balance
+   - If balance > 0, sign and submit `withdrawEarnings(balance)`
+   - Use relayer/keeper service (Wyoming DAO LLC sponsored)
+   - Log transaction in UI history
+   - Notification: "Auto-claimed X PAT overnight"
 
 ### Phase 4: UI/UX
 1. **Dashboard**
@@ -321,17 +429,36 @@ User sees: "Earned 15 PAT"
 
 ## Notes
 
+**Architecture & Trust Model:**
 - Browser is **separate from marketplace** (different codebases)
 - Marketplace broker controls segment pricing; browser users don't
 - Users earn passive income from behavior; no ads or interruptions
 - PAT token is earned (not purchased) through normal usage
 - Phases 1-4 marketplace progression is transparent to browser users
 
+**Custodial Wallet Model:**
+- **You (Wyoming DAO LLC) are the custodian** – You control private key encryption/recovery
+- **Private keys stay local** – Never transmitted to servers (only during password recovery)
+- **No MetaMask dependency** – Seamless UX, automatic payouts
+- **Email-based recovery** – Users can recover if password is forgotten
+- **Fixed withdrawal address** – Same wallet receives all payouts (immutable)
+- **No gas fees for users** – Wyoming DAO LLC covers all transaction costs (relayer/keeper service)
+
+**Regulatory Approach:**
+- Initially operate under **Wyoming DAO LLC exemption** (no VASP registration yet)
+- As platform scales, evaluate whether formal custodian registration is needed
+- Maintain clear privacy policy: what data is tracked, how it's monetized, user controls
+
 ---
 
 **Ready for Opus:** Yes. This handoff clarifies:
 - Browser is real user application (not autonomous agent)
-- Web3 wallet integration for payout notifications
-- Smart contract event listening for earnings
-- Data flow from browser → AI ingestion → marketplace
-- Implementation priorities for Tauri/Chromium + ethers.js
+- **Custodial embedded wallet** (private keys local, you are custodian)
+- Zero friction UX (no MetaMask, automatic payouts)
+- Email-based password recovery (seamless account recovery)
+- Manual + automatic claims (nightly auto-claim + on-demand claims)
+- Fixed withdrawal address (set at signup, never changes)
+- No gas fees for users (Wyoming DAO LLC covers via relayer)
+- Data flow: Browser (track) → AI Ingestion (analyze) → Marketplace (sell) → Smart Contract (pay)
+- Implementation: Tauri (Rust) + ethers.js + SQLite for local storage
+- Smart contract functions: `recordPayout()`, `withdrawEarnings()`, event listening
