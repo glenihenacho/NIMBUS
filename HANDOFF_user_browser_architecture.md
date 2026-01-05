@@ -139,32 +139,41 @@ Browser listens for PayoutEvent
   → Add to balance: total earned = 15 PAT
 ```
 
-**Nightly Auto-Claim (Automatic):**
+**Fixed withdrawal address:** All earnings go to same wallet address (set at signup, never changes).
+
+**Nightly Auto-Claim (Automatic - No Gas Fees):**
 ```
 Every night at 2 AM UTC:
   1. Browser checks accumulated earnings
   2. Calls withdrawEarnings(amount) automatically
   3. Private key decrypted (using stored password)
-  4. Transaction signed + submitted to zkSync Era
+  4. Transaction signed + submitted to zkSync Era (via relayer)
   5. PAT transferred to withdrawal_wallet
-  6. UI updates: "Claimed 45 PAT overnight"
+  6. UI updates: "Auto-claimed 45 PAT overnight"
+
+Wyoming DAO LLC covers gas (cost of user acquisition)
 ```
 
-**Manual Claim (On-Demand):**
+**Manual Claim (On-Demand - User Pays Gas):**
 ```
-User sees: "Earnings: 127.50 PAT"
-User clicks: "Claim Now" button
-  ├─ Browser decrypts private key
+User sees: "Earnings: 127.50 PAT" [Claim Now] button
+User clicks: "Claim Now"
+  ├─ Browser shows estimated gas cost (~$0.10 on zkSync Era)
+  ├─ User confirms ("Gas: ~0.0001 ETH")
+  ├─ Browser decrypts private key (user re-enters password)
   ├─ Signs: withdrawEarnings(127.50) transaction
-  ├─ Submits to zkSync Era
+  ├─ User's withdrawal_wallet pays gas
   └─ PAT arrives in withdrawal_wallet within seconds
 
-UI updates: "Earnings: 0 PAT" (reset after claim)
+UI updates: "Earnings: 0 PAT"
 ```
 
-**No gas fees:** Wyoming DAO LLC covers gas for auto-claims and manual claims (cost of user acquisition).
-
-**Fixed withdrawal address:** All earnings go to same wallet address (set at signup, never changes).
+**Why this model:**
+- ✅ Auto-claim always free (passive income, you subsidize)
+- ✅ Manual claim gas is minimal (~$0.10 on zkSync Era)
+- ✅ User only pays if they explicitly request withdrawal
+- ✅ Prevents spam/constant transactions
+- ✅ Aligns with blockchain norms (user initiates = user pays)
 
 ---
 
@@ -275,23 +284,26 @@ event SegmentCreated(
 );
 ```
 
-### Browser Claims (No Gas Fees)
-Wyoming DAO LLC covers all gas fees for:
-- **Auto-claim transactions** (every night)
-- **Manual claim transactions** (on-demand)
+### Gas Fee Model
 
-This is a user acquisition cost—users should never pay gas.
+**Auto-claim (Automatic - No Gas Fees):**
+- Wyoming DAO LLC covers gas via relayer/keeper service
+- This is a user acquisition cost
+- Nightly job (2 AM UTC) automatically claims for users
+- Users see passive income without paying gas
 
-**Implementation options:**
-- Option A: Relayer/keeper service signs transactions for users
-- Option B: Meta-transactions (EIP-2771) with sponsor
-- Option C: Flashbots Relay (MEV-free, sponsored gas)
+**Manual claim (On-Demand - User Pays Gas):**
+- User initiates withdrawal, user pays gas
+- Gas cost is minimal on zkSync Era (~$0.10 / ~0.0001 ETH)
+- Browser shows estimated gas before user confirms
+- Aligns with blockchain norms
 
-**Auto-claim mechanism:**
-- Nightly job reads user's `userEarnings[address]` balance
-- If balance > 0, calls `withdrawEarnings(balance)`
-- Relayer/keeper signs and submits
-- PAT arrives in withdrawal_wallet (user's fixed address)
+**Implementation for auto-claim:**
+- Relayer/keeper service: Reads `userEarnings[address]` balance
+- If balance > 0, signs and submits `withdrawEarnings(balance)` transaction
+- Wyoming DAO LLC account pays gas for the relayer
+- Meta-transaction approach (EIP-2771) or direct sponsorship recommended
+- PAT arrives in user's withdrawal_wallet (fixed address)
 
 ---
 
@@ -349,11 +361,15 @@ This is a user acquisition cost—users should never pay gas.
    - Update earnings balance UI
    - Trigger desktop notification (optional)
 
-3. **Manual claim functionality**
+3. **Manual claim functionality (User pays gas)**
    - User clicks "Claim Now" button
-   - Browser decrypts private key (user enters password again)
-   - Sign: `withdrawEarnings(amount)` transaction
+   - Browser fetches estimated gas cost (via eth_estimateGas)
+   - Show UI: "Claim 127.50 PAT? (~$0.10 gas cost)"
+   - User confirms claim
+   - Browser decrypts private key (user re-enters password)
+   - Sign: `withdrawEarnings(amount)` transaction with user's gas budget
    - Submit to zkSync Era
+   - User's withdrawal_wallet pays the gas fee
    - Update UI on confirmation
    - Show transaction hash/receipt
 
@@ -445,7 +461,7 @@ User sees: "Earned 15 PAT"
 - **No MetaMask dependency** – Seamless UX, automatic payouts
 - **Email-based recovery** – Users can recover if password is forgotten
 - **Fixed withdrawal address** – Same wallet receives all payouts (immutable)
-- **No gas fees for users** – Wyoming DAO LLC covers all transaction costs (relayer/keeper service)
+- **Gas fee split:** Auto-claim free (you pay), manual claim user pays (~$0.10 on zkSync Era)
 
 **Regulatory Approach:**
 - Initially operate under **Wyoming DAO LLC exemption** (no VASP registration yet)
@@ -459,9 +475,9 @@ User sees: "Earned 15 PAT"
 - **Custodial embedded wallet** (private keys local, you are custodian)
 - Zero friction UX (no MetaMask, automatic payouts)
 - Email-based password recovery (seamless account recovery)
-- Manual + automatic claims (nightly auto-claim + on-demand claims)
+- **Auto-claim (nightly):** Free, you pay gas (relayer)
+- **Manual claim (on-demand):** User pays gas (~$0.10 on zkSync Era)
 - Fixed withdrawal address (set at signup, never changes)
-- No gas fees for users (Wyoming DAO LLC covers via relayer)
 - Data flow: Browser (track) → AI Ingestion (analyze) → Marketplace (sell) → Smart Contract (pay)
 - Implementation: Ungoogled-Chromium fork + ethers.js + SQLite for local storage + custodial wallet
 - Smart contract functions: `recordPayout()`, `withdrawEarnings()`, event listening
