@@ -1,0 +1,154 @@
+# Prometheus Alert Rules for Intent Detection Engine
+
+groups:
+  - name: intent_engine_alerts
+    interval: 30s
+    rules:
+      # High escalation rate
+      - alert: HighEscalationRate
+        expr: intent_escalation_rate > 0.30
+        for: 10m
+        labels:
+          severity: warning
+          component: router
+        annotations:
+          summary: "Escalation rate is abnormally high"
+          description: "Escalation rate is {{ $value | humanizePercentage }}, expected < 30%"
+
+      # Very high escalation rate
+      - alert: VeryHighEscalationRate
+        expr: intent_escalation_rate > 0.50
+        for: 5m
+        labels:
+          severity: critical
+          component: router
+        annotations:
+          summary: "Escalation rate is critically high"
+          description: "Escalation rate is {{ $value | humanizePercentage }}, expected < 30%"
+
+      # Model latency
+      - alert: HighModelLatency
+        expr: histogram_quantile(0.95, intent_inference_latency_seconds) > 5.0
+        for: 5m
+        labels:
+          severity: warning
+          component: "{{ $labels.model }}"
+        annotations:
+          summary: "High p95 latency for {{ $labels.model }}"
+          description: "p95 latency is {{ $value }}s, expected < 5s"
+
+      # Model errors
+      - alert: HighModelErrorRate
+        expr: rate(intent_model_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: "{{ $labels.model }}"
+        annotations:
+          summary: "High error rate for {{ $labels.model }}"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+
+      # Router request failures
+      - alert: HighRouterErrorRate
+        expr: rate(intent_inference_requests_total{status="error"}[5m]) / rate(intent_inference_requests_total[5m]) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+          component: router
+        annotations:
+          summary: "High router error rate"
+          description: "Error rate is {{ $value | humanizePercentage }}, expected < 2%"
+
+      # DeepSeek cost spike
+      - alert: DeepSeekCostSpike
+        expr: rate(intent_inference_latency_seconds_count{model="deepseek-reasoning"}[1h]) > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: escalation
+        annotations:
+          summary: "DeepSeek usage is spiking"
+          description: "{{ $value }} escalations per second, may incur high costs"
+
+      # Database connection pool exhaustion
+      - alert: DatabasePoolExhaustion
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Postgres connection pool near exhaustion"
+          description: "{{ $value | humanizePercentage }} of max connections used"
+
+      # Disk space
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.15
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining"
+
+  - name: data_quality_alerts
+    interval: 60s
+    rules:
+      # Intent distribution shift
+      - alert: IntentDistributionShift
+        expr: abs(sum(rate(intent_inference_requests_total[1h])) by (intent) - sum(rate(intent_inference_requests_total[1h] offset 24h)) by (intent)) / sum(rate(intent_inference_requests_total[1h] offset 24h)) by (intent) > 0.30
+        for: 30m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Intent distribution has shifted significantly"
+          description: "{{ $labels.intent }} distribution changed by {{ $value | humanizePercentage }} vs 24h ago"
+
+      # Low confidence trend
+      - alert: LowConfidenceTrend
+        expr: avg(gating_cheap_confidence) < 0.60
+        for: 30m
+        labels:
+          severity: warning
+          component: classifier
+        annotations:
+          summary: "Average classifier confidence is low"
+          description: "Average confidence is {{ $value }}, expected > 0.60"
+
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      # High CPU
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}%"
+
+      # High memory
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanizePercentage }}"
+
+      # Container restart
+      - alert: ContainerRestarting
+        expr: rate(container_last_seen{name=~".+"}[5m]) > 2
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Container {{ $labels.name }} is restarting frequently"
+          description: "Restart rate: {{ $value }} per second"

@@ -1,0 +1,278 @@
+{
+  "description": "Intent Detection Engine - BigQuery Analytics Schema",
+  "tables": [
+    {
+      "name": "events_raw",
+      "description": "Raw append-only event storage (immutable, replayable, monetizable)",
+      "schema": {
+        "fields": [
+          {
+            "name": "event_id",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Unique event identifier (UUID)"
+          },
+          {
+            "name": "session_id",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Session identifier"
+          },
+          {
+            "name": "user_id_hash",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Hashed user identifier (anonymized)"
+          },
+          {
+            "name": "event_type",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Event type: page_view, click, scroll, search, etc."
+          },
+          {
+            "name": "url",
+            "type": "STRING",
+            "mode": "NULLABLE",
+            "description": "Original URL (if consent given)"
+          },
+          {
+            "name": "url_hash",
+            "type": "STRING",
+            "mode": "NULLABLE",
+            "description": "Hashed URL for privacy"
+          },
+          {
+            "name": "timestamp",
+            "type": "TIMESTAMP",
+            "mode": "REQUIRED",
+            "description": "Event timestamp (UTC)"
+          },
+          {
+            "name": "properties",
+            "type": "JSON",
+            "mode": "NULLABLE",
+            "description": "Event-specific properties (scroll_depth, click_position, etc.)"
+          },
+          {
+            "name": "ingestion_timestamp",
+            "type": "TIMESTAMP",
+            "mode": "REQUIRED",
+            "description": "When event was ingested into BigQuery"
+          }
+        ]
+      },
+      "timePartitioning": {
+        "type": "DAY",
+        "field": "timestamp"
+      },
+      "clustering": {
+        "fields": ["session_id", "event_type"]
+      }
+    },
+    {
+      "name": "intent_inference_runs",
+      "description": "Append-only log of all model inference runs",
+      "schema": {
+        "fields": [
+          {
+            "name": "run_id",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Unique run identifier (UUID)"
+          },
+          {
+            "name": "decision_id",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Associated decision identifier"
+          },
+          {
+            "name": "model_id",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Model identifier: rasa, mistral-small, deepseek-reasoning"
+          },
+          {
+            "name": "input_event_count",
+            "type": "INTEGER",
+            "mode": "REQUIRED",
+            "description": "Number of events used as input"
+          },
+          {
+            "name": "output",
+            "type": "JSON",
+            "mode": "REQUIRED",
+            "description": "Complete model output (intent, confidence, alternatives, etc.)"
+          },
+          {
+            "name": "latency_ms",
+            "type": "FLOAT",
+            "mode": "REQUIRED",
+            "description": "Inference latency in milliseconds"
+          },
+          {
+            "name": "success",
+            "type": "BOOLEAN",
+            "mode": "REQUIRED",
+            "description": "Whether inference succeeded"
+          },
+          {
+            "name": "error_message",
+            "type": "STRING",
+            "mode": "NULLABLE",
+            "description": "Error message if failed"
+          },
+          {
+            "name": "created_at",
+            "type": "TIMESTAMP",
+            "mode": "REQUIRED",
+            "description": "When inference was performed"
+          }
+        ]
+      },
+      "timePartitioning": {
+        "type": "DAY",
+        "field": "created_at"
+      },
+      "clustering": {
+        "fields": ["model_id", "success"]
+      }
+    },
+    {
+      "name": "intent_decisions",
+      "description": "Append-only log of final intent decisions",
+      "schema": {
+        "fields": [
+          {
+            "name": "decision_id",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Unique decision identifier (UUID)"
+          },
+          {
+            "name": "session_id",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Session identifier"
+          },
+          {
+            "name": "intent",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Final intent classification"
+          },
+          {
+            "name": "confidence",
+            "type": "FLOAT",
+            "mode": "REQUIRED",
+            "description": "Confidence score (0-1)"
+          },
+          {
+            "name": "was_escalated",
+            "type": "BOOLEAN",
+            "mode": "REQUIRED",
+            "description": "Whether decision was escalated to DeepSeek"
+          },
+          {
+            "name": "model_used",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Final model that made the decision"
+          },
+          {
+            "name": "gating_decision",
+            "type": "RECORD",
+            "mode": "REQUIRED",
+            "description": "Gating policy decision details",
+            "fields": [
+              {
+                "name": "should_escalate",
+                "type": "BOOLEAN",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "reason",
+                "type": "STRING",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "cheap_confidence",
+                "type": "FLOAT",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "top2_margin",
+                "type": "FLOAT",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "risk_level",
+                "type": "STRING",
+                "mode": "REQUIRED"
+              },
+              {
+                "name": "high_value_session",
+                "type": "BOOLEAN",
+                "mode": "REQUIRED"
+              }
+            ]
+          },
+          {
+            "name": "source_event_ids",
+            "type": "STRING",
+            "mode": "REPEATED",
+            "description": "Event IDs that contributed to this decision (for replay)"
+          },
+          {
+            "name": "policy_version",
+            "type": "STRING",
+            "mode": "REQUIRED",
+            "description": "Gating policy version used"
+          },
+          {
+            "name": "created_at",
+            "type": "TIMESTAMP",
+            "mode": "REQUIRED",
+            "description": "When decision was made"
+          }
+        ]
+      },
+      "timePartitioning": {
+        "type": "DAY",
+        "field": "created_at"
+      },
+      "clustering": {
+        "fields": ["intent", "was_escalated"]
+      }
+    }
+  ],
+  "views": [
+    {
+      "name": "escalation_rate_daily",
+      "description": "Daily escalation rate for monitoring drift",
+      "query": "SELECT\n  DATE(created_at) as date,\n  COUNT(*) as total_decisions,\n  COUNTIF(was_escalated) as escalated_count,\n  ROUND(COUNTIF(was_escalated) / COUNT(*) * 100, 2) as escalation_rate_pct,\n  AVG(confidence) as avg_confidence\nFROM `{project}.{dataset}.intent_decisions`\nGROUP BY date\nORDER BY date DESC"
+    },
+    {
+      "name": "model_performance_hourly",
+      "description": "Hourly model performance metrics",
+      "query": "SELECT\n  TIMESTAMP_TRUNC(created_at, HOUR) as hour,\n  model_id,\n  COUNT(*) as total_runs,\n  COUNTIF(success) as success_count,\n  ROUND(AVG(latency_ms), 2) as avg_latency_ms,\n  ROUND(APPROX_QUANTILES(latency_ms, 100)[OFFSET(95)], 2) as p95_latency_ms,\n  ROUND(APPROX_QUANTILES(latency_ms, 100)[OFFSET(99)], 2) as p99_latency_ms\nFROM `{project}.{dataset}.intent_inference_runs`\nWHERE success = true\nGROUP BY hour, model_id\nORDER BY hour DESC, model_id"
+    },
+    {
+      "name": "intent_distribution_shift",
+      "description": "Compare current vs historical intent distribution",
+      "query": "WITH current_week AS (\n  SELECT\n    intent,\n    COUNT(*) as count\n  FROM `{project}.{dataset}.intent_decisions`\n  WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)\n  GROUP BY intent\n),\nprior_week AS (\n  SELECT\n    intent,\n    COUNT(*) as count\n  FROM `{project}.{dataset}.intent_decisions`\n  WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)\n    AND created_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)\n  GROUP BY intent\n)\nSELECT\n  c.intent,\n  c.count as current_count,\n  p.count as prior_count,\n  ROUND((c.count - p.count) / p.count * 100, 2) as pct_change\nFROM current_week c\nLEFT JOIN prior_week p ON c.intent = p.intent\nORDER BY ABS((c.count - p.count) / p.count) DESC"
+    },
+    {
+      "name": "cost_per_intent",
+      "description": "Estimate cost per resolved intent by model",
+      "query": "WITH model_costs AS (\n  SELECT\n    model_id,\n    -- Placeholder: replace with actual cost per 1M tokens\n    CASE model_id\n      WHEN 'rasa' THEN 0.0\n      WHEN 'mistral-small' THEN 0.25\n      WHEN 'deepseek-reasoning' THEN 2.50\n    END as cost_per_million_tokens\n  FROM UNNEST(['rasa', 'mistral-small', 'deepseek-reasoning']) as model_id\n)\nSELECT\n  d.intent,\n  d.model_used,\n  COUNT(*) as decision_count,\n  -- Simplified: assumes ~500 tokens per inference\n  ROUND(mc.cost_per_million_tokens * COUNT(*) * 500 / 1000000, 4) as estimated_cost_usd\nFROM `{project}.{dataset}.intent_decisions` d\nJOIN model_costs mc ON d.model_used = mc.model_id\nWHERE d.created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)\nGROUP BY d.intent, d.model_used, mc.cost_per_million_tokens\nORDER BY estimated_cost_usd DESC"
+    }
+  ],
+  "notes": [
+    "Partition retention: events_raw (365 days), inference_runs (90 days), decisions (365 days)",
+    "BigQuery is the source of truth for analytics and re-inference",
+    "Postgres is synced from BigQuery for operational reads (use Dataflow or dbt)",
+    "For re-inference: JOIN events_raw ON source_event_ids to replay any decision"
+  ]
+}

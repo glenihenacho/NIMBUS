@@ -1,0 +1,242 @@
+# RudderStack Data Plane Configuration
+# Self-hosted event ingestion for PAT Intent Engine
+
+version: "1.0"
+
+# Sources (browser-side tracking)
+sources:
+  - name: "pat-browser"
+    type: "javascript"
+    write_key: "${RUDDERSTACK_BROWSER_WRITE_KEY}"
+    enabled: true
+    config:
+      # Tracking plan enforcement
+      tracking_plan:
+        enabled: true
+        validation_mode: "strict"  # Reject unknown events in production
+        allowed_events:
+          # Browsing events
+          - "page_viewed"
+          - "page_exited"
+          - "link_clicked"
+          - "form_submitted"
+          - "scroll_depth"
+          - "search_performed"
+          # Intent-related events
+          - "product_viewed"
+          - "add_to_cart"
+          - "checkout_started"
+          - "purchase_completed"
+          - "content_engaged"
+          - "comparison_started"
+
+      # Event transformations (client-side)
+      transformations:
+        - name: "anonymize_pii"
+          enabled: true
+          script: |
+            // Remove PII from event properties
+            if (event.properties.email) delete event.properties.email;
+            if (event.properties.name) delete event.properties.name;
+            if (event.properties.phone) delete event.properties.phone;
+
+        - name: "hash_urls"
+          enabled: true
+          script: |
+            // Hash URLs for privacy
+            const crypto = require('crypto');
+            if (event.properties.url) {
+              event.properties.url_hash = crypto
+                .createHash('sha256')
+                .update(event.properties.url)
+                .digest('hex');
+              // Optionally remove original URL
+              // delete event.properties.url;
+            }
+
+# Destinations
+destinations:
+  # BigQuery: Raw event lake (immutable, replayable)
+  - name: "bigquery-raw-events"
+    type: "bigquery"
+    enabled: true
+    connection_mode: "cloud"
+    config:
+      project_id: "${GCP_PROJECT_ID}"
+      dataset: "intent_engine"
+      table: "events_raw"
+      credentials: "${GCP_CREDENTIALS_JSON}"
+
+      # Partitioning by timestamp (daily)
+      partitioning:
+        type: "time"
+        field: "timestamp"
+        granularity: "day"
+
+      # Clustering for query optimization
+      clustering:
+        fields: ["session_id", "event_type"]
+
+      # Append-only (no updates/deletes)
+      write_disposition: "WRITE_APPEND"
+
+      # Schema mapping
+      schema:
+        event_id: "{{ event.messageId }}"
+        session_id: "{{ event.sessionId }}"
+        user_id_hash: "{{ event.anonymousId }}"
+        event_type: "{{ event.event }}"
+        url: "{{ event.properties.url }}"
+        url_hash: "{{ event.properties.url_hash }}"
+        timestamp: "{{ event.timestamp }}"
+        properties: "{{ event.properties | json }}"
+        ingestion_timestamp: "{{ currentTimestamp }}"
+
+  # Postgres: Operational reads (real-time routing)
+  - name: "postgres-operational"
+    type: "postgres"
+    enabled: true
+    connection_mode: "cloud"
+    config:
+      host: "${POSTGRES_HOST}"
+      port: 5432
+      database: "intent_engine"
+      user: "${POSTGRES_USER}"
+      password: "${POSTGRES_PASSWORD}"
+      ssl_mode: "require"
+
+      # Write to a staging table (then move to operational via trigger)
+      table: "events_staging"
+
+      # Only write recent events (last 7 days) for routing
+      filters:
+        - field: "timestamp"
+          operator: ">"
+          value: "{{ now - 7d }}"
+
+  # Optional: Amazon S3 for backup/archival
+  - name: "s3-archive"
+    type: "s3"
+    enabled: false  # Enable for compliance/audit requirements
+    config:
+      bucket: "${S3_BUCKET_NAME}"
+      prefix: "intent-engine/events/"
+      region: "${AWS_REGION}"
+      credentials: "${AWS_CREDENTIALS}"
+
+      # Parquet format for efficient storage
+      format: "parquet"
+      compression: "gzip"
+
+# Server-side transformations
+transformations:
+  # Enrichment: Add session context
+  - name: "enrich_session_context"
+    enabled: true
+    destinations: ["bigquery-raw-events", "postgres-operational"]
+    code: |
+      async function transform(events) {
+        // Fetch session context from Postgres
+        const sessionIds = events.map(e => e.sessionId);
+        const sessions = await fetchSessions(sessionIds);
+
+        // Enrich events with session data
+        return events.map(event => {
+          const session = sessions[event.sessionId];
+          if (session) {
+            event.properties.session_value_score = session.value_score;
+            event.properties.session_risk_level = session.risk_level;
+          }
+          return event;
+        });
+      }
+
+  # Consent filtering: Only process consented data
+  - name: "consent_filter"
+    enabled: true
+    destinations: ["bigquery-raw-events", "postgres-operational"]
+    code: |
+      function transform(events) {
+        // Filter out events from users who haven't consented
+        return events.filter(event => {
+          const consent = event.context?.consent;
+          return consent?.data_collection === true;
+        });
+      }
+
+# Rate limiting (prevent abuse)
+rate_limiting:
+  enabled: true
+  # Per session limits
+  session:
+    max_events_per_minute: 100
+    max_events_per_hour: 1000
+  # Per user limits
+  user:
+    max_events_per_minute: 200
+    max_events_per_hour: 2000
+
+# Retry policy
+retry_policy:
+  max_retries: 3
+  backoff_type: "exponential"
+  initial_delay_ms: 1000
+  max_delay_ms: 30000
+
+# Monitoring
+monitoring:
+  # Export metrics to Prometheus
+  prometheus:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+
+  # Health check endpoint
+  health_check:
+    enabled: true
+    port: 8080
+    path: "/health"
+
+# Data quality checks
+data_quality:
+  # Reject events with missing required fields
+  required_fields:
+    - "messageId"
+    - "sessionId"
+    - "anonymousId"
+    - "event"
+    - "timestamp"
+
+  # Validate event schema
+  schema_validation:
+    enabled: true
+    mode: "strict"  # Reject malformed events
+
+  # Deduplication (within 5 minute window)
+  deduplication:
+    enabled: true
+    window_seconds: 300
+    key_fields: ["messageId"]
+
+# Privacy & compliance
+privacy:
+  # GDPR: Right to erasure
+  deletion_api:
+    enabled: true
+    endpoint: "/v1/delete"
+
+  # Data retention
+  retention:
+    raw_events_days: 365
+    operational_events_days: 90
+
+  # PII detection and removal
+  pii_detection:
+    enabled: true
+    fields_to_scan: ["properties", "url"]
+    action: "redact"  # or "reject"
+
+# Notes:
+# 1. Set environment variables for credentials: RUDDERSTACK_BROWSER_WRITE_KEY, GCP_PROJECT_ID, etc.
+# 2. Deploy RudderStack data plane: docker run -p 8080:8080 rudderlabs/rudder-server
+# 3. Configure browser to send events to: http://localhost:8080

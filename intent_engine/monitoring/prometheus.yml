@@ -1,0 +1,106 @@
+# Prometheus Configuration for Intent Detection Engine
+# Scrapes metrics from router service, classifiers, and infrastructure
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'intent-engine'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'alertmanager:9093'
+
+# Load alert rules
+rule_files:
+  - 'alert_rules.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Router service metrics
+  - job_name: 'router-service'
+    static_configs:
+      - targets: ['router-api:8000']
+        labels:
+          service: 'router'
+          component: 'api'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Rasa classifier metrics
+  - job_name: 'rasa-classifier'
+    static_configs:
+      - targets: ['rasa-pro:5005']
+        labels:
+          service: 'classifier'
+          component: 'rasa'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Mistral serving (vLLM)
+  - job_name: 'mistral-vllm'
+    static_configs:
+      - targets: ['llm-mistral:8080']
+        labels:
+          service: 'llm'
+          component: 'mistral'
+          model: 'mistral-small'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # DeepSeek serving (vLLM)
+  - job_name: 'deepseek-vllm'
+    static_configs:
+      - targets: ['llm-deepseek:8080']
+        labels:
+          service: 'llm'
+          component: 'deepseek'
+          model: 'deepseek-reasoner'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Postgres exporter
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: 'database'
+          component: 'postgres'
+
+  # RudderStack data plane
+  - job_name: 'rudderstack'
+    static_configs:
+      - targets: ['rudderstack:9090']
+        labels:
+          service: 'ingestion'
+          component: 'rudderstack'
+
+  # Node exporter (system metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: 'infrastructure'
+          component: 'node'
+
+  # cAdvisor (container metrics)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: 'infrastructure'
+          component: 'containers'
+
+# Remote write (optional: to long-term storage like Thanos/Cortex)
+# remote_write:
+#   - url: 'http://thanos-receive:19291/api/v1/receive'
+#     queue_config:
+#       capacity: 10000
+#       max_shards: 50
+#       min_shards: 1
+#       max_samples_per_send: 5000
+#       batch_send_deadline: 5s

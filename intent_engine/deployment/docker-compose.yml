@@ -1,0 +1,306 @@
+# Docker Compose for Intent Detection Engine
+# Complete stack: ingestion, routing, classifiers, escalation, monitoring
+
+version: '3.8'
+
+services:
+  # === DATA LAYER ===
+
+  # Postgres (operational reads/writes)
+  postgres:
+    image: postgres:15-alpine
+    container_name: intent-postgres
+    environment:
+      POSTGRES_DB: intent_engine
+      POSTGRES_USER: ${POSTGRES_USER:-intent_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../models/postgres_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intent_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - intent-net
+
+  # Postgres exporter (Prometheus metrics)
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: intent-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-intent_user}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/intent_engine?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    networks:
+      - intent-net
+
+  # Redis (optional: for rate limiting, session state)
+  redis:
+    image: redis:7-alpine
+    container_name: intent-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - intent-net
+
+  # === INGESTION ===
+
+  # RudderStack data plane
+  rudderstack:
+    image: rudderlabs/rudder-server:latest
+    container_name: intent-rudderstack
+    environment:
+      WORKSPACE_TOKEN: ${RUDDERSTACK_WORKSPACE_TOKEN}
+      CONFIG_BACKEND_URL: ${RUDDERSTACK_CONFIG_BACKEND_URL:-https://api.rudderlabs.com}
+    volumes:
+      - rudderstack_data:/data
+      - ../ingestion/rudderstack_config.yml:/etc/rudderstack/config.yml
+    ports:
+      - "8080:8080"  # Event ingestion
+      - "9090:9090"  # Prometheus metrics
+    depends_on:
+      - postgres
+    networks:
+      - intent-net
+
+  # === ROUTER SERVICE ===
+
+  # FastAPI router
+  router-api:
+    build:
+      context: ../router
+      dockerfile: Dockerfile
+    container_name: intent-router
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-intent_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: intent_engine
+      REDIS_HOST: redis
+      RASA_ENDPOINT: http://rasa-pro:5005
+      MISTRAL_ENDPOINT: http://llm-mistral:8080
+      DEEPSEEK_ENDPOINT: http://llm-deepseek:8080
+      LOG_LEVEL: info
+    volumes:
+      - ../router:/app
+    ports:
+      - "8000:8000"  # API
+    depends_on:
+      - postgres
+      - redis
+      - rasa-pro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - intent-net
+
+  # === CLASSIFIERS ===
+
+  # Rasa Pro (cheap classifier)
+  rasa-pro:
+    image: rasa/rasa-pro:latest
+    container_name: intent-rasa
+    environment:
+      RASA_LICENSE_KEY: ${RASA_LICENSE_KEY}
+    volumes:
+      - ../classifiers/rasa_model:/app/models
+      - ../classifiers/rasa_config:/app/config
+    ports:
+      - "5005:5005"
+    command: >
+      run
+      --enable-api
+      --cors "*"
+      --model /app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - intent-net
+
+  # Mistral-Small (vLLM serving)
+  llm-mistral:
+    image: vllm/vllm-openai:latest
+    container_name: intent-llm-mistral
+    environment:
+      MODEL_NAME: mistralai/Mistral-Small-Instruct-2409
+      TENSOR_PARALLEL_SIZE: 1
+      GPU_MEMORY_UTILIZATION: 0.8
+    volumes:
+      - llm_cache:/root/.cache/huggingface
+    ports:
+      - "8001:8080"
+    command: >
+      --model ${MODEL_NAME}
+      --host 0.0.0.0
+      --port 8080
+      --tensor-parallel-size 1
+      --dtype auto
+      --max-model-len 8192
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - intent-net
+
+  # === ESCALATION ===
+
+  # DeepSeek Reasoning (vLLM serving)
+  llm-deepseek:
+    image: vllm/vllm-openai:latest
+    container_name: intent-llm-deepseek
+    environment:
+      MODEL_NAME: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+      TENSOR_PARALLEL_SIZE: 1
+      GPU_MEMORY_UTILIZATION: 0.9
+    volumes:
+      - llm_cache:/root/.cache/huggingface
+    ports:
+      - "8002:8080"
+    command: >
+      --model ${MODEL_NAME}
+      --host 0.0.0.0
+      --port 8080
+      --tensor-parallel-size 1
+      --dtype auto
+      --max-model-len 16384
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - intent-net
+
+  # === MONITORING ===
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: intent-prometheus
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ../monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    ports:
+      - "9091:9090"
+    networks:
+      - intent-net
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: intent-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../monitoring/grafana_dashboards:/etc/grafana/provisioning/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - intent-net
+
+  # Alertmanager (optional)
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: intent-alertmanager
+    volumes:
+      - ../monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
+    networks:
+      - intent-net
+
+  # === INFRASTRUCTURE MONITORING ===
+
+  # Node exporter (system metrics)
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: intent-node-exporter
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "9100:9100"
+    networks:
+      - intent-net
+
+  # cAdvisor (container metrics)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: intent-cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "8081:8080"
+    networks:
+      - intent-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  rudderstack_data:
+  llm_cache:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+networks:
+  intent-net:
+    driver: bridge
+
+# Usage:
+# 1. Set environment variables in .env file
+# 2. Start all services: docker-compose up -d
+# 3. Check health: docker-compose ps
+# 4. View logs: docker-compose logs -f router-api
+# 5. Access Grafana: http://localhost:3000
+# 6. Access Router API: http://localhost:8000/docs
