@@ -1,19 +1,35 @@
-# PAT AI Browser Agent
+# PAT Intent Detection Engine
 
-A Qwen-powered browser agent for collecting web browsing intent signals.
+Backend pipeline for detecting web browsing intent signals and creating monetizable data segments.
+
+**NOTE:** This is the data ingestion + intent inference layer. For the user-facing browser, see `HANDOFF_user_browser_architecture.md`.
 
 ## Overview
 
-This agent autonomously browses the web to detect and extract browsing intent
-signals that are packaged as data segments for the PAT marketplace.
+This pipeline processes raw browsing events (from Ungoogled-Chromium browser) through a hybrid intent detection system:
+- **Cheap classifier**: Rasa Pro + Mistral-small (via vLLM)
+- **Escalation**: DeepSeek reasoning (gated, expensive)
+- **Output**: Structured intent signals → data segments → marketplace
 
 ## Features
 
-- **Qwen-powered analysis**: Uses Alibaba's Qwen LLM for intelligent intent detection
-- **Playwright automation**: Headless browser automation for reliable web scraping
-- **Intent classification**: Detects purchase, research, comparison, and engagement intents
-- **Segment creation**: Packages signals into marketplace-ready data segments
-- **Marketplace integration**: Submits segments to the PAT marketplace API
+- **Hybrid intent detection**: Rasa (deterministic) + Mistral (semantic) + DeepSeek (reasoning)
+- **RudderStack ingestion**: Event transport, schema validation, tracking plan enforcement
+- **BigQuery + Postgres**: Immutable event lake + operational state
+- **Gating policy**: Escalate to long-chain only when uncertain (confidence < 0.70)
+- **Segment creation**: Aggregate intents into marketplace-ready segments
+- **Marketplace integration**: Submit segments at ASK prices determined by broker algorithm
+
+## Architecture Stack
+
+**See HANDOFF_intent_detection_engine.md for complete spec.**
+
+- **Ingestion**: RudderStack (self-hosted data plane)
+- **Storage**: BigQuery (raw events) + Postgres (operational)
+- **Cheap Classifier**: Rasa Pro + Mistral-small (vLLM)
+- **Escalation**: DeepSeek reasoning (vLLM, gated)
+- **Serving**: FastAPI router (single inference entry point)
+- **Monitoring**: Prometheus + Grafana + OpenSearch
 
 ## Installation
 
@@ -25,8 +41,8 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Install Playwright browsers
-playwright install chromium
+# Install models locally or use vLLM
+pip install vllm
 ```
 
 ## Configuration
@@ -38,49 +54,51 @@ cp .env.example .env
 ```
 
 Required environment variables:
-- `QWEN_API_KEY`: Your Qwen API key from Alibaba Cloud
-- `PAT_MARKETPLACE_KEY`: API key for the PAT marketplace
+- `RUDDERSTACK_API_KEY`: RudderStack write key
+- `BIGQUERY_PROJECT_ID`: GCP BigQuery project
+- `POSTGRES_URI`: PostgreSQL connection string
+- `VLLM_MISTRAL_URL`: vLLM endpoint for Mistral (http://localhost:8001)
+- `VLLM_DEEPSEEK_URL`: vLLM endpoint for DeepSeek (http://localhost:8002)
+- `PAT_MARKETPLACE_API_KEY`: API key for marketplace submission
 
 ## Usage
 
-### Basic Usage
-
-```python
-import asyncio
-from src import BrowserAgent, QwenAPIClient, IntentType
-
-async def main():
-    # Initialize
-    qwen = QwenAPIClient()
-    agent = BrowserAgent(qwen)
-
-    # Start browser
-    await agent.start(headless=True)
-
-    # Browse and collect signals
-    urls = ["https://example.com/product/laptop"]
-    signals = await agent.browse_urls(urls)
-
-    # Create data segment
-    segment = agent.create_segment(
-        segment_type=IntentType.PURCHASE_INTENT,
-        time_window_days=7,
-        confidence_min=0.70,
-        confidence_max=0.90
-    )
-
-    # Export for marketplace
-    agent.export_segments([segment], "output.json")
-
-    await agent.stop()
-
-asyncio.run(main())
-```
-
-### Running the Demo
+### Start Intent Router (FastAPI)
 
 ```bash
-python -m src.agent
+# Ensure vLLM services are running first
+python -m vllm.entrypoints.openai_api_server --model mistralai/Mistral-7B-Instruct-v0.1 --port 8001
+python -m vllm.entrypoints.openai_api_server --model deepseek-ai/deepseek-coder-33b-instruct --port 8002
+
+# Start router service
+python -m src.router
+```
+
+### Infer Intent
+
+```python
+import httpx
+import asyncio
+
+async def infer_intent(event_bundle):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8000/api/infer/intent",
+            json={
+                "session_id": "abc-123",
+                "user_id": "user-456",
+                "events": event_bundle
+            }
+        )
+    return response.json()
+
+# Response includes: decision_id, final_intent, confidence, supporting_signals, alternatives
+```
+
+### Running Tests
+
+```bash
+pytest tests/
 ```
 
 ## Data Segments
@@ -95,15 +113,46 @@ Example segment ID: `PURCHASE_INTENT|7D|0.70-0.85`
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Browser Agent  │────▶│   Qwen Client   │────▶│   Marketplace   │
-│  (Playwright)   │     │   (Analysis)    │     │   (zkSync Era)  │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-        │                        │                       │
-        ▼                        ▼                       ▼
-   Navigate &              Detect Intent           Submit Segment
-   Extract DOM             Signals                 for Trading
+┌──────────────────────────┐
+│  Ungoogled-Chromium      │
+│  (User Browser)          │
+│  + Canonical Events      │
+└────────────┬─────────────┘
+             ↓
+┌──────────────────────────┐
+│  RudderStack             │
+│  (Event Transport)       │
+└────────────┬─────────────┘
+             ↓
+    ┌────────┴──────────┐
+    ↓                   ↓
+┌─────────┐       ┌──────────┐
+│BigQuery │       │Postgres  │
+│(Raw)    │       │(Ops)     │
+└────┬────┘       └────┬─────┘
+     └────────┬─────────┘
+              ↓
+┌──────────────────────────────────┐
+│  FastAPI Router (Inference)      │
+├──────────────────────────────────┤
+│ ├─ Rasa Pro (cheap classifier)  │
+│ ├─ Mistral-small (vLLM, scorer) │
+│ ├─ Gating policy (escalate?)     │
+│ └─ DeepSeek (vLLM, long-chain)  │
+└────────────┬─────────────────────┘
+             ↓
+┌──────────────────────────┐
+│  Segment Creation        │
+│  (Aggregate intents)     │
+└────────────┬─────────────┘
+             ↓
+┌──────────────────────────┐
+│  PAT Marketplace         │
+│  (Atomic Settlement)     │
+└──────────────────────────┘
 ```
+
+**See HANDOFF_intent_detection_engine.md for complete architecture.**
 
 ## Testing
 

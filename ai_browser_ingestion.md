@@ -1,19 +1,28 @@
-# AI Browser for Data Ingestion – Architecture & Implementation Guide
+# Intent Detection Pipeline – Architecture & Implementation Guide
 
-This document describes the design and implementation of an **AI browser
-agent** powered by **Qwen** capable of autonomously browsing the web,
-interacting with pages and ingesting **web browsing intent signals**.  The goal
-is to build a modular agent that creates data segments for the PAT marketplace.
+This document describes the design and implementation of the **intent detection pipeline** for PAT.
+
+**IMPORTANT:** See `HANDOFF_intent_detection_engine.md` for the complete, production-ready specification.
+
+The pipeline:
+1. Collects canonical browser events (from Ungoogled-Chromium browser)
+2. Routes through intent classifiers (Rasa + Mistral-small)
+3. Escalates uncertain cases to DeepSeek (reasoning model)
+4. Aggregates intents into monetizable data segments
+5. Submits segments to PAT marketplace
 
 ## Technical Specifications
 
 | Component | Technology |
 |-----------|------------|
-| **LLM** | Qwen (Alibaba) |
-| **Data Type** | Web browsing intent signals |
-| **Browser Automation** | Playwright |
+| **Ingestion** | RudderStack (self-hosted) |
+| **Storage** | BigQuery (raw) + Postgres (ops) |
+| **Cheap Classifier** | Rasa Pro + Mistral-small (vLLM) |
+| **Escalation** | DeepSeek reasoning (vLLM, gated) |
+| **Serving** | FastAPI router |
+| **Data Type** | Web browsing intent signals (canonical schema) |
 | **Output** | Data segments for PAT marketplace |
-| **Storage** | Centralized cloud |
+| **Monitoring** | Prometheus + Grafana + OpenSearch |
 
 ## 1. Concept & Motivation
 
@@ -29,45 +38,41 @@ collection, research and workflows.
 
 ## 2. Architecture Overview
 
-At a high level, the PAT AI browser agent consists of:
+The PAT intent detection pipeline consists of:
 
-1. **Brain (Qwen LLM)** – The Qwen large language model interprets high‑level
-   goals and plans a sequence of actions.  It converts natural language commands
-   into structured tasks and identifies web browsing intent signals.
-2. **Perception module** – Code that parses web pages (HTML, JSON) and
-   identifies relevant elements such as buttons, forms and data tables.
-3. **Action module** – Functions that perform browser actions (clicking,
-   typing, scrolling) to navigate pages and interact with UI elements.
-4. **Decision logic** – The control loop that selects the next action based on
-   the agent’s goal and current page state.  Different agent types (simple
-   reflex, model‑based, goal‑based, utility‑based or learning) vary in how they
-   implement this logic.
+1. **Event Collection (Ungoogled-Chromium)** – Browser collects raw browsing events
+   following canonical schema (page_view, scroll, click, text_input, etc.)
 
-The workflow begins with the user defining a goal.  The LLM breaks this goal
-into sub‑tasks.  The perception module reads the current page to determine
-available actions, and the decision logic chooses the appropriate action.  The
-action module executes the action and the cycle repeats until the goal is
-achieved.
+2. **Event Transport (RudderStack)** – Self-hosted data plane validates tracking plan,
+   enforces schema, routes events to BigQuery + Postgres
 
-### Agent Types
+3. **Storage Layer** –
+   - **BigQuery**: Immutable append-only raw events (replayable)
+   - **Postgres**: Operational state (sessions, routing decisions)
 
-LayerX identifies several categories of AI agents:
+4. **Intent Inference (FastAPI Router)** –
+   - **Cheap path**: Rasa Pro (deterministic) + Mistral-small (vLLM, semantic)
+   - **Gating policy**: Escalate if confidence < 0.70 (or high-risk/ambiguous)
+   - **Expensive path**: DeepSeek reasoning (vLLM, long-chain)
 
-- **Simple reflex agents** – React to patterns with hard‑coded rules; useful
-  for trivial tasks like auto‑accepting cookie banners.
-- **Model‑based agents** – Maintain an internal representation of the world
-  (e.g. remember items in a cart).
-- **Goal‑based agents** – Plan actions to achieve a specific goal, such as
-  booking a flight.
-- **Utility‑based agents** – Optimize a utility function (e.g. minimize cost or
-  maximize efficiency).
-- **Learning agents** – Adapt over time based on feedback, improving
-  performance.
-- **API‑enhanced hybrid agents** – Combine multiple approaches and leverage
-  external APIs for enhanced capabilities.
+5. **Output Generation** – Structured intent decisions (JSON) linked to source events
 
-For initial implementation, a **goal‑based agent** is suitable.  As the
-project matures, hybrid approaches can be adopted.
+6. **Segment Creation** – Aggregate intent decisions into monetizable segments
+   (type, window, confidence, ASK price)
+
+### Classifier Hybrid
+
+The intent detection uses a **hybrid classifier approach**:
+
+- **Rasa Pro** – Deterministic NLU for known intents (fast, stable, rule-based)
+- **Mistral-small** – Semantic classifier via vLLM (flexible, learns from context)
+- **DeepSeek** – Long-chain reasoning (expensive, gated, used for ambiguous cases)
+
+**Why hybrid:**
+- Rasa handles 90% of cases fast and cheap
+- Mistral adds semantic flexibility when Rasa confidence is borderline
+- DeepSeek provides reasoning for high-stakes decisions (high-value sessions, new intents)
+- Gating policy ensures cost-efficient escalation (only ~10% → DeepSeek)
 
 ## 3. Practical Development Steps
 
@@ -114,18 +119,39 @@ risks:
 
 ## 5. Next Steps for Developers
 
-1. **Prototype a minimal agent** – Use Python with **Playwright** and **Qwen**
-   to implement a goal‑based agent that can navigate webpages and extract
-   browsing intent signals.
-2. **Define segment schema** – Create a data model for intent signal segments
-   including type, time window, confidence score and metadata.
-3. **Integrate with PAT marketplace** – Connect the agent's output to the
-   data marketplace via REST APIs.  Segments are stored on centralized cloud
-   and priced/settled on zkSync Era.
-4. **Implement safety features** – Add prompt injection detection, request
-   confirmation for sensitive actions and comprehensive logging.
-5. **Iterate and expand** – Fine‑tune Qwen for intent signal detection and
-   explore learning capabilities to adapt to user behaviour.
+**See HANDOFF_intent_detection_engine.md for complete implementation spec.**
 
-See `contracts/` for the PAT token smart contract and `browser/` for the
-agent implementation.
+### Implementation Roadmap
+
+1. **Deploy event pipeline**
+   - RudderStack (self-hosted data plane)
+   - BigQuery + Postgres
+   - Canonical event schema validation
+
+2. **Deploy intent classifiers**
+   - Rasa Pro + Mistral-small (vLLM)
+   - DeepSeek (vLLM)
+   - Gating policy (escalation thresholds)
+
+3. **Implement FastAPI router**
+   - Cheap classification endpoint
+   - Gating logic
+   - Async writes to BigQuery + Postgres
+
+4. **Segment creation pipeline**
+   - Aggregate intents from decisions
+   - Filter for eligibility (5+ signals, conf ≥ 0.70)
+   - Submit to marketplace API
+
+5. **Monitoring & observability**
+   - Prometheus + Grafana dashboards
+   - OpenSearch audit trail
+   - Cost tracking per intent
+
+### Architecture References
+
+- **Event schema**: See `HANDOFF_canonical_event_schema.md`
+- **Intent pipeline**: See `HANDOFF_intent_detection_engine.md`
+- **Broker model**: See `HANDOFF_data_market_broker_model.md`
+- **Smart contracts**: `contracts/` for PAT settlement on zkSync Era
+- **User browser**: See `HANDOFF_user_browser_architecture.md`
