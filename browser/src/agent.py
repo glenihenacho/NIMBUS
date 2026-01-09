@@ -1,8 +1,8 @@
 """
 PAT AI Browser Agent - Powered by Qwen
 
-This agent autonomously browses the web to extract web browsing intent signals
-that are packaged as data segments for the PAT marketplace.
+Collects browser events using canonical schema (v1) and extracts
+intent signals for the PAT marketplace.
 """
 
 import asyncio
@@ -15,17 +15,31 @@ from typing import Optional
 from playwright.async_api import async_playwright, Browser
 
 from .qwen_client import QwenAPIClient
+from .schema import EventType, BrowserEvent, IntentInference, Context, Privacy
 
 logger = logging.getLogger(__name__)
 
 
 class IntentType(Enum):
-    """Types of browsing intent signals"""
+    """
+    Intent signal types - aligned with DataMarketplace.SegmentType
+
+    Maps to smart contract enum:
+    0 = PURCHASE_INTENT
+    1 = RESEARCH_INTENT
+    2 = COMPARISON_INTENT
+    3 = ENGAGEMENT_INTENT
+    4 = NAVIGATION_INTENT
+    """
     PURCHASE_INTENT = "PURCHASE_INTENT"
     RESEARCH_INTENT = "RESEARCH_INTENT"
     COMPARISON_INTENT = "COMPARISON_INTENT"
     ENGAGEMENT_INTENT = "ENGAGEMENT_INTENT"
     NAVIGATION_INTENT = "NAVIGATION_INTENT"
+
+    def to_contract_id(self) -> int:
+        """Map to smart contract SegmentType enum index"""
+        return list(IntentType).index(self)
 
 
 @dataclass
@@ -89,12 +103,15 @@ class BrowserAgent:
     AI Browser Agent for collecting web browsing intent signals
 
     Uses Playwright for browser automation and Qwen for intent analysis.
+    Collects raw events using canonical schema (v1) for reprocessing.
     """
 
     def __init__(self, qwen_client: QwenAPIClient):
         self.qwen = qwen_client
         self.browser: Optional[Browser] = None
         self.collected_signals: list[IntentSignal] = []
+        self.raw_events: list[BrowserEvent] = []  # Canonical schema events
+        self.inferences: list[IntentInference] = []  # Separate from raw events
         logger.info("Initialized Browser Agent")
 
     async def start(self, headless: bool = True):
@@ -109,7 +126,31 @@ class BrowserAgent:
             await self.browser.close()
             logger.info("Browser stopped")
 
-    def _convert_intents(self, intents: list[dict], url: str) -> list[IntentSignal]:
+    def _create_page_event(self, url: str, title: str) -> BrowserEvent:
+        """Create canonical PAGE_VIEW event"""
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        now = datetime.utcnow()
+
+        return BrowserEvent(
+            event_type=EventType.PAGE_VIEW,
+            event_time=now,
+            context=Context(
+                url_domain=parsed.netloc,
+                url_path=parsed.path,
+                viewport_width=1920,
+                viewport_height=1080,
+                device_type="desktop",
+                country="US",
+                hour_of_day=now.hour,
+                day_of_week=now.weekday(),
+                is_business_hours=9 <= now.hour <= 17
+            ),
+            payload={"title": title, "url": url},
+            privacy=Privacy(consent_monetization=True, data_sale_opt_in=True)
+        )
+
+    def _convert_intents(self, intents: list[dict], url: str, event_id: str) -> list[IntentSignal]:
         """Convert Qwen API response to IntentSignal objects"""
         signals = []
         for intent in intents:
@@ -122,6 +163,13 @@ class BrowserAgent:
                     timestamp=datetime.utcnow(),
                     metadata={"evidence": intent.get("evidence", "")}
                 ))
+                # Store inference separately per canonical schema
+                self.inferences.append(IntentInference(
+                    source_event_ids=[event_id],
+                    intent_type=intent_type.value,
+                    confidence=intent.get("confidence", 0.5),
+                    alternatives=[]
+                ))
             except (KeyError, ValueError) as e:
                 logger.warning(f"Skipping invalid intent: {e}")
         return signals
@@ -129,6 +177,8 @@ class BrowserAgent:
     async def navigate_and_analyze(self, url: str) -> list[IntentSignal]:
         """
         Navigate to a URL and analyze for intent signals
+
+        Creates canonical PAGE_VIEW event and stores intent inferences separately.
         """
         if not self.browser:
             raise RuntimeError("Browser not started. Call start() first.")
@@ -145,9 +195,13 @@ class BrowserAgent:
 
             logger.info(f"Page loaded: {title}")
 
-            # Analyze with Qwen
+            # Create and store raw event (canonical schema)
+            event = self._create_page_event(url, title)
+            self.raw_events.append(event)
+
+            # Analyze with Qwen - inferences stored separately
             result = await self.qwen.analyze_page_content(url, content)
-            signals = self._convert_intents(result.get("intents", []), url)
+            signals = self._convert_intents(result.get("intents", []), url, event.event_id)
 
             # Store collected signals
             self.collected_signals.extend(signals)
@@ -220,6 +274,27 @@ class BrowserAgent:
             json.dump(data, f, indent=2)
 
         logger.info(f"Exported {len(segments)} segments to {filepath}")
+
+    def export_raw_events(self, filepath: str):
+        """
+        Export raw events and inferences per canonical schema
+
+        Separates raw events from intent inferences for:
+        - Model swapping without touching raw events
+        - Historical reprocessing
+        - GDPR/CCPA compliance via retention_tier
+        """
+        data = {
+            "events_raw": [e.to_dict() for e in self.raw_events],
+            "intent_inferences": [i.to_dict() for i in self.inferences],
+            "exported_at": datetime.utcnow().isoformat(),
+            "schema_version": "v1"
+        }
+
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=2)
+
+        logger.info(f"Exported {len(self.raw_events)} events, {len(self.inferences)} inferences to {filepath}")
 
 
 async def main():
