@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import sys
 sys.path.insert(0, '/home/user/NIMBUS/browser')
 
-from src.agent import IntentType, IntentSignal, DataSegment, QwenClient
+from src.agent import IntentType, IntentSignal, DataSegment
+from src.llm_clients import MistralClient, DeepSeekClient, GatingPolicy
 
 
 class TestIntentSignal:
@@ -95,46 +96,97 @@ class TestDataSegment:
         assert d["signal_count"] == 0
 
 
-class TestQwenClient:
-    """Tests for QwenClient (mock mode)"""
+class TestMistralClient:
+    """Tests for MistralClient (mock mode when vLLM unavailable)"""
 
     @pytest.mark.asyncio
-    async def test_analyze_purchase_url(self):
-        client = QwenClient()
+    async def test_score_purchase_intent(self):
+        client = MistralClient()
 
-        signals = await client.analyze_page(
-            page_content="<html>Buy now</html>",
-            url="https://shop.example.com/product/laptop"
-        )
+        events = [{
+            "event_type": "page_view",
+            "context": {"url": "https://shop.example.com/cart/checkout"},
+            "payload": {"title": "Buy Now - Checkout"}
+        }]
 
-        # Should detect purchase intent from URL pattern
-        purchase_signals = [s for s in signals if s.type == IntentType.PURCHASE_INTENT]
-        assert len(purchase_signals) > 0
-        assert purchase_signals[0].confidence > 0.7
+        result = await client.score_intent(events)
 
-    @pytest.mark.asyncio
-    async def test_analyze_comparison_url(self):
-        client = QwenClient()
-
-        signals = await client.analyze_page(
-            page_content="<html>Compare products</html>",
-            url="https://example.com/compare/phones-vs-tablets"
-        )
-
-        comparison_signals = [s for s in signals if s.type == IntentType.COMPARISON_INTENT]
-        assert len(comparison_signals) > 0
+        # Should return scores dict with top_intent
+        assert "scores" in result
+        assert "top_intent" in result
+        assert "confidence" in result
+        await client.close()
 
     @pytest.mark.asyncio
-    async def test_analyze_research_url(self):
-        client = QwenClient()
+    async def test_score_research_intent(self):
+        client = MistralClient()
 
-        signals = await client.analyze_page(
-            page_content="<html>Learn how to code</html>",
-            url="https://blog.example.com/article/learn-python"
+        events = [{
+            "event_type": "page_view",
+            "context": {"url": "https://blog.example.com/guide/how-to-learn"},
+            "payload": {"title": "Learning Guide"}
+        }]
+
+        result = await client.score_intent(events)
+        assert "RESEARCH_INTENT" in result.get("scores", {})
+        await client.close()
+
+
+class TestGatingPolicy:
+    """Tests for GatingPolicy escalation logic"""
+
+    def test_low_confidence_escalates(self):
+        policy = GatingPolicy()
+
+        should_escalate, reason = policy.should_escalate(
+            intent="PURCHASE_INTENT",
+            confidence=0.60,
+            scores={"PURCHASE_INTENT": 0.60}
         )
 
-        research_signals = [s for s in signals if s.type == IntentType.RESEARCH_INTENT]
-        assert len(research_signals) > 0
+        assert should_escalate is True
+        assert reason == "low_confidence"
+
+    def test_high_confidence_no_escalation(self):
+        policy = GatingPolicy()
+
+        should_escalate, reason = policy.should_escalate(
+            intent="NAVIGATION_INTENT",
+            confidence=0.85,
+            scores={"NAVIGATION_INTENT": 0.85}
+        )
+
+        assert should_escalate is False
+        assert reason is None
+
+    def test_high_risk_intent_escalates(self):
+        policy = GatingPolicy()
+
+        # PURCHASE_INTENT is high-risk, needs confidence >= 0.85
+        should_escalate, reason = policy.should_escalate(
+            intent="PURCHASE_INTENT",
+            confidence=0.75,
+            scores={"PURCHASE_INTENT": 0.75}
+        )
+
+        assert should_escalate is True
+        assert reason == "high_risk_low_confidence"
+
+    def test_ambiguous_scores_escalate(self):
+        policy = GatingPolicy()
+
+        # Top-2 margin < 0.10 triggers escalation
+        should_escalate, reason = policy.should_escalate(
+            intent="PURCHASE_INTENT",
+            confidence=0.72,
+            scores={
+                "PURCHASE_INTENT": 0.72,
+                "RESEARCH_INTENT": 0.68  # Only 0.04 margin
+            }
+        )
+
+        assert should_escalate is True
+        assert reason == "ambiguous"
 
 
 class TestIntentTypes:
@@ -150,6 +202,13 @@ class TestIntentTypes:
         assert "COMPARISON_INTENT" in type_names
         assert "ENGAGEMENT_INTENT" in type_names
         assert "NAVIGATION_INTENT" in type_names
+
+    def test_to_contract_id(self):
+        assert IntentType.PURCHASE_INTENT.to_contract_id() == 0
+        assert IntentType.RESEARCH_INTENT.to_contract_id() == 1
+        assert IntentType.COMPARISON_INTENT.to_contract_id() == 2
+        assert IntentType.ENGAGEMENT_INTENT.to_contract_id() == 3
+        assert IntentType.NAVIGATION_INTENT.to_contract_id() == 4
 
 
 if __name__ == "__main__":
