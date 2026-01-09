@@ -10,7 +10,7 @@ from .schema import EventType, BrowserEvent, IntentInference, Context, Privacy
 from .llm_clients import MistralClient, DeepSeekClient, GatingPolicy
 from .marketplace_client import MarketplaceClient, LocalStorageClient
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 __all__ = [
     # Agent
@@ -24,7 +24,7 @@ __all__ = [
     "IntentInference",
     "Context",
     "Privacy",
-    # LLM Clients
+    # LLM Clients (Mistral + DeepSeek)
     "MistralClient",
     "DeepSeekClient",
     "GatingPolicy",
