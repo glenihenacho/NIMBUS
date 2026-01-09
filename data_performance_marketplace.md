@@ -12,7 +12,7 @@ discover, evaluate and purchase data using PAT tokens on **zkSync Era**.
 | **Settlement** | zkSync Era (PAT token) |
 | **Data Storage** | Centralized cloud |
 | **Data Type** | Web browsing intent signals |
-| **Data Source** | Qwen‑powered AI browser agent |
+| **Data Source** | Rasa + Mistral + DeepSeek hybrid browser agent |
 | **Jurisdiction** | Wyoming DAO LLC |
 
 ## 1. Overview
@@ -151,7 +151,7 @@ The PAT marketplace architecture:
    settlement occur on zkSync Era.
 5. **Smart contracts (zkSync Era)** – PAT token contract, segment registry,
    payment escrow and market maker collateral management.
-6. **AI browser integration** – The Qwen‑powered browser agent pushes new
+6. **AI browser integration** – The hybrid intent detection agent pushes new
    intent signal segments via API.  Segments are validated, scored and listed
    automatically.
 

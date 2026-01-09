@@ -148,7 +148,7 @@ class IntentInference:
     """
     inference_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     source_event_ids: list[str] = field(default_factory=list)
-    model_id: str = "qwen-turbo"
+    model_id: str = "mistral-small"
     model_version: str = "1.0"
 
     intent_type: str = ""

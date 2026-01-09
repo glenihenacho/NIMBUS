@@ -3,14 +3,15 @@
 This document describes the design and implementation of **PAT Browser**, a
 Chromium-based web browser that enables users to monetize their browsing data
 through the PAT marketplace. The browser passively ingests browsing behavior,
-uses Qwen AI to identify intent signals, and creates tradeable data segments.
+uses a hybrid Rasa + Mistral + DeepSeek pipeline to identify intent signals,
+and creates tradeable data segments.
 
 ## Technical Specifications
 
 | Component | Technology |
 |-----------|------------|
-| **Base** | Chromium (fork) |
-| **AI Engine** | Qwen (Alibaba) |
+| **Base** | Ungoogled-Chromium (fork) |
+| **AI Engine** | Rasa Pro + Mistral-small + DeepSeek (hybrid) |
 | **Data Collected** | URLs, time on page, scroll depth, clicks, search queries, form inputs |
 | **Privacy** | Incognito mode excludes all data collection |
 | **Output** | Intent signal data segments |
@@ -34,12 +35,12 @@ costs. PAT Browser flips this model:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                            PAT Browser (Chromium Fork)                       │
+│                         PAT Browser (Ungoogled-Chromium)                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   Chromium  │  │    Data     │  │    Qwen     │  │    PAT Wallet &     │ │
-│  │   Renderer  │──│  Collector  │──│  Analyzer   │──│  Marketplace Client │ │
-│  │             │  │             │  │             │  │                     │ │
+│  │   Chromium  │  │    Data     │  │   Intent    │  │    PAT Wallet &     │ │
+│  │   Renderer  │──│  Collector  │──│   Router    │──│  Marketplace Client │ │
+│  │             │  │             │  │ (FastAPI)   │  │                     │ │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
 │         │               │               │                     │             │
 │         ▼               ▼               ▼                     ▼             │
@@ -58,8 +59,8 @@ costs. PAT Browser flips this model:
 
 ### Core Components
 
-1. **Chromium Renderer** – Standard Chromium rendering engine with hooks for
-   data collection events.
+1. **Chromium Renderer** – Ungoogled-Chromium rendering engine (no Google telemetry)
+   with hooks for data collection events.
 
 2. **Data Collector** – Native C++ component that captures browsing events:
    - Page navigation (URL, timestamp, referrer)
@@ -69,12 +70,11 @@ costs. PAT Browser flips this model:
    - Search queries (from search engine URLs)
    - Form inputs (sanitized, no passwords/PII)
 
-3. **Qwen Analyzer** – Local or API-based Qwen inference that processes raw
-   browsing data into intent signals:
-   - Purchase intent (product pages, cart additions, price comparisons)
-   - Research intent (articles, guides, documentation)
-   - Comparison intent (review sites, "vs" searches)
-   - Engagement intent (social interactions, comments)
+3. **Intent Router (FastAPI)** – Hybrid inference pipeline:
+   - **Rasa Pro** – Deterministic classifier for known intents
+   - **Mistral-small** – Semantic scorer via vLLM
+   - **DeepSeek** – Long-chain reasoning for ambiguous cases (gated)
+   - Gating policy escalates when confidence < 0.70
 
 4. **PAT Wallet & Marketplace Client** – Integrated wallet for:
    - Managing PAT token balance
@@ -129,7 +129,7 @@ costs. PAT Browser flips this model:
 
 ## 4. Intent Signal Detection
 
-The Qwen AI engine processes raw browsing events to detect intent signals:
+The hybrid Rasa + Mistral + DeepSeek pipeline processes raw browsing events:
 
 ### Signal Types
 
@@ -140,6 +140,24 @@ The Qwen AI engine processes raw browsing events to detect intent signals:
 | **COMPARISON_INTENT** | Review sites, "vs" searches, spec comparisons | Multiple product views, tab switches |
 | **ENGAGEMENT_INTENT** | Comments, shares, likes, form submissions | Interaction frequency, session length |
 | **NAVIGATION_INTENT** | Category browsing, search refinement | Click patterns, query modifications |
+
+### Hybrid Classification Pipeline
+
+```
+Events → Rasa Pro (deterministic) → Mistral (semantic scorer) → Gating Policy
+                                                                      │
+                                        ┌─────────────────────────────┴───┐
+                                        │ If confidence < 0.70            │
+                                        │ If high-risk + conf < 0.85      │
+                                        │ If top-2 margin < 0.10          │
+                                        └─────────────────────────────────┘
+                                                      │
+                                                      ▼
+                                              DeepSeek (reasoning)
+                                                      │
+                                                      ▼
+                                              Final Intent Decision
+```
 
 ### Segment Format
 
@@ -177,7 +195,7 @@ export PATH="$PATH:$(pwd)/depot_tools"
 # Create working directory
 mkdir pat-browser && cd pat-browser
 
-# Fetch Chromium source
+# Fetch Ungoogled-Chromium source
 fetch --nohooks chromium
 cd src
 
@@ -186,7 +204,7 @@ git checkout tags/120.0.6099.109 -b pat-browser
 
 # Apply PAT Browser patches
 git apply ../patches/pat-data-collector.patch
-git apply ../patches/pat-qwen-integration.patch
+git apply ../patches/pat-intent-router.patch
 git apply ../patches/pat-wallet-ui.patch
 
 # Install dependencies
@@ -201,7 +219,7 @@ gn gen out/Release --args='
   proprietary_codecs=true
   ffmpeg_branding="Chrome"
   enable_pat_data_collection=true
-  pat_qwen_api_endpoint="https://api.pat-browser.io/qwen"
+  pat_inference_endpoint="http://localhost:8000/api/infer/intent"
 '
 
 # Build (takes 2-6 hours depending on hardware)
@@ -215,7 +233,7 @@ out/Release/
 ├── chrome                    # Main browser executable
 ├── chrome_sandbox            # Sandbox helper
 ├── libpat_collector.so       # Data collection library
-├── libpat_qwen.so            # Qwen integration library
+├── libpat_inference.so       # Intent router client library
 ├── resources/
 │   └── pat_wallet/           # Wallet UI resources
 └── locales/                  # Localization files
@@ -227,7 +245,7 @@ out/Release/
 browser/
 ├── patches/
 │   ├── pat-data-collector.patch    # Chromium patches for data collection
-│   ├── pat-qwen-integration.patch  # Qwen AI integration
+│   ├── pat-intent-router.patch     # FastAPI inference integration
 │   └── pat-wallet-ui.patch         # Wallet and settings UI
 ├── src/
 │   ├── collector/
@@ -235,10 +253,10 @@ browser/
 │   │   ├── browsing_data_collector.h
 │   │   ├── event_types.h
 │   │   └── privacy_filter.cc
-│   ├── qwen/
+│   ├── inference/
 │   │   ├── intent_analyzer.cc
 │   │   ├── intent_analyzer.h
-│   │   ├── qwen_client.cc
+│   │   ├── mistral_client.cc
 │   │   └── segment_builder.cc
 │   ├── wallet/
 │   │   ├── pat_wallet_controller.cc
@@ -306,7 +324,7 @@ class BrowsingDataCollector {
 }  // namespace pat
 ```
 
-### Intent Analyzer (Qwen Integration)
+### Intent Analyzer (FastAPI Router Client)
 
 ```cpp
 // intent_analyzer.h
@@ -325,11 +343,12 @@ struct IntentSignal {
   double confidence;
   std::vector<std::string> categories;
   base::Time detected_at;
+  std::string model_used;  // "mistral" or "deepseek"
 };
 
 class IntentAnalyzer {
  public:
-  explicit IntentAnalyzer(QwenClient* qwen_client);
+  explicit IntentAnalyzer(const std::string& router_endpoint);
 
   // Analyze recent browsing events and detect intent signals
   std::vector<IntentSignal> AnalyzeEvents(
@@ -343,7 +362,8 @@ class IntentAnalyzer {
       double confidence_max);
 
  private:
-  std::unique_ptr<QwenClient> qwen_client_;
+  std::string router_endpoint_;
+  std::unique_ptr<HttpClient> http_client_;
 };
 
 }  // namespace pat
@@ -362,7 +382,7 @@ class IntentAnalyzer {
 3. **Hash-based Anonymization** – URLs and identifiers are hashed before
    segment creation; original values never leave the device.
 
-4. **Secure Qwen Communication** – API calls to Qwen use TLS 1.3 with
+4. **Secure Inference** – Intent router runs locally or via TLS 1.3 with
    certificate pinning.
 
 ### User Controls
@@ -379,16 +399,16 @@ class IntentAnalyzer {
 ## 9. Development Roadmap
 
 ### Phase 1: Foundation
-- [ ] Set up Chromium build environment
-- [ ] Implement basic data collector hooks
-- [ ] Create local encrypted storage
-- [ ] Build privacy filter and exclusion system
+- [x] Set up Ungoogled-Chromium build environment
+- [x] Implement basic data collector hooks
+- [x] Create local encrypted storage
+- [x] Build privacy filter and exclusion system
 
 ### Phase 2: AI Integration
-- [ ] Integrate Qwen client (API-based initially)
-- [ ] Implement intent signal detection
-- [ ] Build segment creation pipeline
-- [ ] Add confidence scoring
+- [x] Implement FastAPI intent router
+- [x] Integrate Mistral + DeepSeek via vLLM
+- [x] Implement gating policy for escalation
+- [x] Build segment creation pipeline
 
 ### Phase 3: Marketplace Integration
 - [ ] Implement PAT wallet UI
@@ -404,10 +424,10 @@ class IntentAnalyzer {
 
 ## 10. Next Steps
 
-1. **Set up build environment** – Install depot_tools and fetch Chromium source
+1. **Set up build environment** – Install depot_tools and fetch Ungoogled-Chromium
 2. **Create initial patches** – Hook into Chromium's navigation and event system
 3. **Implement data collector** – Start with URL and time-on-page tracking
 4. **Build privacy filter** – Implement incognito detection and site exclusions
-5. **Test locally** – Verify data collection works without breaking browsing
+5. **Deploy intent router** – Run FastAPI with vLLM (Mistral + DeepSeek)
 
 See `contracts/` for the PAT token smart contract implementation.

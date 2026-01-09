@@ -8,7 +8,8 @@ A Web3 data monetization platform on **zkSync Era** enabling users to earn PAT t
 |-----------|-------------|
 | **PAT Token** | ERC-20 utility token (555,222,888 supply) with team vesting |
 | **Data Marketplace** | UUPS upgradeable atomic settlement for intent signal segments |
-| **Browser Agent** | Qwen-powered intent detection from browsing behavior |
+| **Intent Detection** | Hybrid classifier: Rasa Pro + Mistral-small + DeepSeek (gated) |
+| **User Browser** | Ungoogled-Chromium with custodial embedded wallet |
 
 **Jurisdiction:** Wyoming DAO LLC
 
@@ -18,12 +19,42 @@ A Web3 data monetization platform on **zkSync Era** enabling users to earn PAT t
 contracts/
   contracts/PAT.sol              # ERC-20 token with allocation + vesting
   contracts/DataMarketplace.sol  # Atomic settlement marketplace (UUPS)
+  deploy/deploy.ts               # zkSync Era deployment script
   test/                          # Hardhat test suite
 
 browser/
+  src/router.py                  # FastAPI inference router
+  src/llm_clients.py             # vLLM clients (Mistral + DeepSeek)
+  src/schema.py                  # Canonical event schema (v1)
   src/agent.py                   # Browser automation + segment creation
-  src/qwen_client.py             # Qwen LLM API client
-  src/marketplace_client.py      # Marketplace API client
+```
+
+## Intent Detection Stack
+
+```
+┌─────────────────────┐
+│  User Browser       │  Ungoogled-Chromium + Canonical Events
+└─────────┬───────────┘
+          ↓
+┌─────────────────────┐
+│  RudderStack        │  Event transport + schema validation
+└─────────┬───────────┘
+          ↓
+┌─────────────────────┐
+│  FastAPI Router     │  Single inference entry point
+├─────────────────────┤
+│  Rasa + Mistral     │  Cheap classifier (hybrid)
+│  Gating Policy      │  Escalate if confidence < 0.70
+│  DeepSeek           │  Long-chain reasoning (gated)
+└─────────┬───────────┘
+          ↓
+┌─────────────────────┐
+│  Data Segments      │  Aggregate intents → marketplace
+└─────────┬───────────┘
+          ↓
+┌─────────────────────┐
+│  PAT Marketplace    │  Atomic settlement (zkSync Era)
+└─────────────────────┘
 ```
 
 ## Quick Start
@@ -33,9 +64,9 @@ browser/
 cd contracts && npm install && npx hardhat test
 ```
 
-**Browser:**
+**Intent Router:**
 ```bash
-cd browser && pip install -r requirements.txt && python -m src.agent
+cd browser && pip install -r requirements.txt && python -m src.router
 ```
 
 ## Token Allocation
