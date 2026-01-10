@@ -7,7 +7,13 @@ Creates monetizable data segments for the PAT marketplace.
 
 from .agent import BrowserAgent, IntentType, IntentSignal, DataSegment
 from .schema import EventType, BrowserEvent, IntentInference, Context, Privacy
-from .llm_clients import MistralClient, DeepSeekClient, GatingPolicy
+from .llm_clients import (
+    RasaClient,
+    HybridClassifier,
+    MistralClient,
+    DeepSeekClient,
+    GatingPolicy
+)
 from .marketplace_client import MarketplaceClient, LocalStorageClient
 
 __version__ = "2.0.0"
@@ -24,7 +30,9 @@ __all__ = [
     "IntentInference",
     "Context",
     "Privacy",
-    # LLM Clients (Mistral + DeepSeek)
+    # Hybrid Classifier (Rasa + Mistral + DeepSeek)
+    "RasaClient",
+    "HybridClassifier",
     "MistralClient",
     "DeepSeekClient",
     "GatingPolicy",

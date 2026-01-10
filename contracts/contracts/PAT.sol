@@ -95,7 +95,8 @@ contract PAT is ERC20, ERC20Burnable, Ownable {
         _transfer(owner(), _ecosystem, ecosystemAmount);
         _transfer(owner(), _ico, icoAmount);
 
-        // Team tokens stay with contract for vesting
+        // Team tokens escrowed in this contract for vesting
+        _transfer(owner(), address(this), teamAmount);
         teamTotalAllocation = teamAmount;
         teamVestingStart = block.timestamp;
         teamVestingDuration = _vestingDuration;
@@ -120,6 +121,7 @@ contract PAT is ERC20, ERC20Burnable, Ownable {
 
     /**
      * @dev Releases vested team tokens to the team vesting contract
+     * Tokens are released from this contract's escrow balance
      */
     function releaseTeamTokens() external {
         require(teamVestingContract != address(0), "Not initialized");
@@ -128,7 +130,7 @@ contract PAT is ERC20, ERC20Burnable, Ownable {
         require(releasable > 0, "No tokens to release");
 
         teamTokensReleased += releasable;
-        _transfer(owner(), teamVestingContract, releasable);
+        _transfer(address(this), teamVestingContract, releasable);
 
         emit TeamTokensReleased(teamVestingContract, releasable);
     }
