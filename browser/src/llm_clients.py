@@ -57,7 +57,7 @@ class MistralClient(VLLMClient):
     """
     Mistral-small client for cheap classification.
 
-    Used in hybrid classifier alongside Rasa Pro.
+    Used in hybrid classifier alongside Rasa Open Source.
     Provides semantic elasticity for evolving intent taxonomy.
     """
 
