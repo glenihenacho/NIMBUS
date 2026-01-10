@@ -4,7 +4,7 @@ FastAPI Intent Detection Router
 Single entry point for all inference per HANDOFF_intent_detection_engine.md.
 
 Architecture:
-- Cheap classifier: Rasa Pro + Mistral-small (hybrid)
+- Cheap classifier: Rasa Open Source + Mistral-small (hybrid)
 - Gating policy: Escalate when uncertain
 - Escalation: DeepSeek reasoning (expensive, gated)
 """

@@ -1,7 +1,7 @@
 """
 PAT Intent Detection Engine
 
-Hybrid intent detection pipeline: Rasa Pro + Mistral + DeepSeek.
+Hybrid intent detection pipeline: Rasa Open Source + Mistral + DeepSeek.
 Creates monetizable data segments for the PAT marketplace.
 """
 

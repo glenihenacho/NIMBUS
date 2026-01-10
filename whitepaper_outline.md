@@ -10,7 +10,7 @@ This document provides a concise outline for an investor‑ and builder‑grade 
 | **Token** | PAT (ERC‑20, 555,222,888 supply) |
 | **Jurisdiction** | Wyoming DAO LLC |
 | **Data Type** | Web browsing intent signals |
-| **AI Engine** | Rasa Pro + Mistral + DeepSeek (hybrid) |
+| **AI Engine** | Rasa Open Source + Mistral + DeepSeek (hybrid) |
 | **Storage** | Centralized cloud (off‑chain) |
 
 ## 1. Abstract

@@ -8,7 +8,7 @@ A Web3 data monetization platform on **zkSync Era** enabling users to earn PAT t
 |-----------|-------------|
 | **PAT Token** | ERC-20 utility token (555,222,888 supply) with team vesting |
 | **Data Marketplace** | UUPS upgradeable atomic settlement for intent signal segments |
-| **Intent Detection** | Hybrid classifier: Rasa Pro + Mistral-small + DeepSeek (gated) |
+| **Intent Detection** | Hybrid classifier: Rasa Open Source + Mistral-small + DeepSeek (gated) |
 | **User Browser** | Ungoogled-Chromium with custodial embedded wallet |
 
 **Jurisdiction:** Wyoming DAO LLC

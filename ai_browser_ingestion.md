@@ -11,7 +11,7 @@ and creates tradeable data segments.
 | Component | Technology |
 |-----------|------------|
 | **Base** | Ungoogled-Chromium (fork) |
-| **AI Engine** | Rasa Pro + Mistral-small + DeepSeek (hybrid) |
+| **AI Engine** | Rasa Open Source + Mistral-small + DeepSeek (hybrid) |
 | **Data Collected** | URLs, time on page, scroll depth, clicks, search queries, form inputs |
 | **Privacy** | Incognito mode excludes all data collection |
 | **Output** | Intent signal data segments |
@@ -71,7 +71,7 @@ costs. PAT Browser flips this model:
    - Form inputs (sanitized, no passwords/PII)
 
 3. **Intent Router (FastAPI)** – Hybrid inference pipeline:
-   - **Rasa Pro** – Deterministic classifier for known intents
+   - **Rasa Open Source** – Deterministic classifier for known intents
    - **Mistral-small** – Semantic scorer via vLLM
    - **DeepSeek** – Long-chain reasoning for ambiguous cases (gated)
    - Gating policy escalates when confidence < 0.70
@@ -144,7 +144,7 @@ The hybrid Rasa + Mistral + DeepSeek pipeline processes raw browsing events:
 ### Hybrid Classification Pipeline
 
 ```
-Events → Rasa Pro (deterministic) → Mistral (semantic scorer) → Gating Policy
+Events → Rasa Open Source (deterministic) → Mistral (semantic scorer) → Gating Policy
                                                                       │
                                         ┌─────────────────────────────┴───┐
                                         │ If confidence < 0.70            │
