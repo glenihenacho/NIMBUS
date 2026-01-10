@@ -33,7 +33,6 @@ export default async function (hre: HardhatRuntimeEnvironment) {
 
   // Configuration
   const brokerWallet = process.env.BROKER_WALLET || deployerAddress;
-  const usersPoolWallet = process.env.USERS_POOL_WALLET || deployerAddress;
   const brokerMarginBps = 3000; // 30%
 
   // Deploy implementation
@@ -43,12 +42,11 @@ export default async function (hre: HardhatRuntimeEnvironment) {
   console.log(`   Implementation: ${implAddress}`);
 
   // For UUPS on zkSync, deploy via TransparentUpgradeableProxy or ERC1967Proxy
-  // Encode initializer
+  // Encode initializer (provider earnings held in contract, withdrawn directly)
   const iface = new ethers.Interface(marketplaceArtifact.abi);
   const initData = iface.encodeFunctionData("initialize", [
     patAddress,
     brokerWallet,
-    usersPoolWallet,
     brokerMarginBps
   ]);
 
@@ -103,8 +101,8 @@ export default async function (hre: HardhatRuntimeEnvironment) {
   console.log("");
   console.log("Configuration:");
   console.log(`  Broker Wallet:    ${brokerWallet}`);
-  console.log(`  Users Pool:       ${usersPoolWallet}`);
   console.log(`  Broker Margin:    ${brokerMarginBps / 100}%`);
+  console.log(`  Note: Provider earnings held in contract, withdrawn directly`);
   console.log("=".repeat(50));
 
   console.log("\nNEXT STEPS:");

@@ -39,7 +39,6 @@ contract DataMarketplace is
     // Global configuration
     uint256 public brokerMarginBps;     // Basis points (e.g., 3000 = 30%)
     address public brokerWallet;         // Broker revenue recipient
-    address public usersPoolWallet;      // Provider payout pool
 
     // Emergency pause
     bool public paused;
@@ -124,7 +123,6 @@ contract DataMarketplace is
     // Event keys (gas-optimized)
     bytes32 private constant KEY_BROKER_MARGIN = "brokerMargin";
     bytes32 private constant KEY_BROKER_WALLET = "brokerWallet";
-    bytes32 private constant KEY_USERS_POOL = "usersPoolWallet";
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -133,16 +131,15 @@ contract DataMarketplace is
 
     /**
      * @dev Initialize the contract (replaces constructor for upgradeable pattern)
+     * Provider earnings are held in contract and withdrawn by users directly
      */
     function initialize(
         address _patToken,
         address _brokerWallet,
-        address _usersPoolWallet,
         uint256 _brokerMarginBps
     ) public initializer {
         require(_patToken != address(0), "Invalid PAT token");
         require(_brokerWallet != address(0), "Invalid broker wallet");
-        require(_usersPoolWallet != address(0), "Invalid users pool");
         require(_brokerMarginBps <= 5000, "Margin too high");
 
         __Ownable_init(msg.sender);
@@ -151,7 +148,6 @@ contract DataMarketplace is
 
         patToken = IERC20(_patToken);
         brokerWallet = _brokerWallet;
-        usersPoolWallet = _usersPoolWallet;
         brokerMarginBps = _brokerMarginBps;
         currentPhase = Phase.UTILITY;
     }
@@ -331,12 +327,6 @@ contract DataMarketplace is
         require(newWallet != address(0), "Invalid address");
         brokerWallet = newWallet;
         emit WalletUpdated(KEY_BROKER_WALLET, newWallet);
-    }
-
-    function setUsersPoolWallet(address newWallet) external onlyOwner {
-        require(newWallet != address(0), "Invalid address");
-        usersPoolWallet = newWallet;
-        emit WalletUpdated(KEY_USERS_POOL, newWallet);
     }
 
     function advancePhase() external onlyOwner {

@@ -10,13 +10,12 @@ describe("DataMarketplace", function () {
   let broker: SignerWithAddress;
   let provider: SignerWithAddress;
   let consumer: SignerWithAddress;
-  let usersPool: SignerWithAddress;
 
   const BROKER_MARGIN_BPS = 3000; // 30%
   const SEGMENT_PRICE = ethers.parseEther("100"); // 100 PAT
 
   beforeEach(async function () {
-    [owner, broker, provider, consumer, usersPool] = await ethers.getSigners();
+    [owner, broker, provider, consumer] = await ethers.getSigners();
 
     // Deploy PAT token
     const PATFactory = await ethers.getContractFactory("PAT");
@@ -24,10 +23,11 @@ describe("DataMarketplace", function () {
     await pat.waitForDeployment();
 
     // Deploy DataMarketplace as upgradeable proxy
+    // Provider earnings held in contract, withdrawn directly by users
     const MarketplaceFactory = await ethers.getContractFactory("DataMarketplace");
     marketplace = await upgrades.deployProxy(
       MarketplaceFactory,
-      [await pat.getAddress(), broker.address, usersPool.address, BROKER_MARGIN_BPS],
+      [await pat.getAddress(), broker.address, BROKER_MARGIN_BPS],
       { kind: "uups" }
     ) as unknown as DataMarketplace;
     await marketplace.waitForDeployment();
@@ -39,7 +39,6 @@ describe("DataMarketplace", function () {
   describe("Deployment", function () {
     it("Should set correct initial configuration", async function () {
       expect(await marketplace.brokerWallet()).to.equal(broker.address);
-      expect(await marketplace.usersPoolWallet()).to.equal(usersPool.address);
       expect(await marketplace.brokerMarginBps()).to.equal(BROKER_MARGIN_BPS);
       expect(await marketplace.getPhaseString()).to.equal("UTILITY");
       expect(await marketplace.paused()).to.equal(false);

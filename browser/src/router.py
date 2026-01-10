@@ -18,7 +18,7 @@ from typing import Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from .llm_clients import MistralClient, DeepSeekClient, GatingPolicy
+from .llm_clients import HybridClassifier, DeepSeekClient, GatingPolicy
 from .schema import BrowserEvent, IntentInference
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Initialize clients
-mistral_client: Optional[MistralClient] = None
+# Initialize clients (Rasa + Mistral hybrid, DeepSeek escalation)
+hybrid_classifier: Optional[HybridClassifier] = None
 deepseek_client: Optional[DeepSeekClient] = None
 gating_policy: Optional[GatingPolicy] = None
 
@@ -61,20 +61,20 @@ class InferResponse(BaseModel):
 @app.on_event("startup")
 async def startup():
     """Initialize clients on startup."""
-    global mistral_client, deepseek_client, gating_policy
+    global hybrid_classifier, deepseek_client, gating_policy
 
-    mistral_client = MistralClient()
+    hybrid_classifier = HybridClassifier()
     deepseek_client = DeepSeekClient()
     gating_policy = GatingPolicy()
 
-    logger.info("Intent router started - Mistral + DeepSeek clients initialized")
+    logger.info("Intent router started - Hybrid (Rasa+Mistral) + DeepSeek initialized")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """Cleanup on shutdown."""
-    if mistral_client:
-        await mistral_client.close()
+    if hybrid_classifier:
+        await hybrid_classifier.close()
     if deepseek_client:
         await deepseek_client.close()
 
@@ -94,10 +94,10 @@ def health():
 @app.post("/api/infer/intent", response_model=InferResponse)
 async def infer_intent(request: InferRequest, background_tasks: BackgroundTasks):
     """
-    Main inference endpoint.
+    Main inference endpoint per HANDOFF_intent_detection_engine.md.
 
     Flow:
-    1. Run cheap classifier (Mistral)
+    1. Run hybrid classifier (Rasa + Mistral)
     2. Apply gating policy
     3. Escalate to DeepSeek if needed
     4. Return decision with metadata
@@ -106,12 +106,13 @@ async def infer_intent(request: InferRequest, background_tasks: BackgroundTasks)
     start_time = time.time()
 
     try:
-        # Step 1: Cheap classification (Mistral)
-        cheap_result = await mistral_client.score_intent(request.events)
+        # Step 1: Hybrid classification (Rasa + Mistral)
+        cheap_result = await hybrid_classifier.classify(request.events)
 
         top_intent = cheap_result.get("top_intent", "NAVIGATION_INTENT")
         confidence = cheap_result.get("confidence", 0.5)
         scores = cheap_result.get("scores", {})
+        classifier_used = cheap_result.get("classifier", "hybrid")
 
         # Step 2: Gating policy
         should_escalate, reason = gating_policy.should_escalate(
@@ -130,7 +131,7 @@ async def infer_intent(request: InferRequest, background_tasks: BackgroundTasks)
             final_confidence = final_result.get("confidence", confidence)
             alternatives = final_result.get("alternatives", [])
         else:
-            model_used = "mistral-cheap"
+            model_used = classifier_used
             final_intent = top_intent
             final_confidence = confidence
             alternatives = [
@@ -189,17 +190,47 @@ def _determine_action(intent: str, confidence: float) -> str:
         return "discard"
 
 
-async def _write_decision(decision_id: str, response: InferResponse, request: InferRequest):
+def _write_decision(decision_id: str, response: InferResponse, request: InferRequest):
     """
-    Write decision to storage (async background task).
+    Write decision to storage (sync background task).
 
+    Note: Using sync function for BackgroundTasks compatibility.
     In production: Write to BigQuery (audit) + Postgres (operational)
     """
+    import json
+
     logger.info(f"Recording decision {decision_id}: {response.final_intent} ({response.confidence})")
 
-    # TODO: Implement actual storage writes
-    # - BigQuery: pat_events.inference_runs table
-    # - Postgres: intent_decisions table
+    # Prepare record for storage
+    record = {
+        "decision_id": decision_id,
+        "user_id": request.user_id,
+        "session_id": request.session_id,
+        "final_intent": response.final_intent,
+        "confidence": response.confidence,
+        "model_id": response.model_id,
+        "escalated": response.escalated,
+        "escalation_reason": response.escalation_reason,
+        "latency_ms": response.latency_ms,
+        "event_count": len(request.events),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    # Production implementation would:
+    # 1. Write to BigQuery: pat_events.inference_runs (audit trail)
+    # 2. Write to Postgres: intent_decisions (operational)
+    #
+    # Example BigQuery write:
+    # from google.cloud import bigquery
+    # client = bigquery.Client()
+    # table_id = "pat_events.inference_runs"
+    # client.insert_rows_json(table_id, [record])
+    #
+    # Example Postgres write:
+    # from sqlalchemy import create_engine
+    # engine.execute(intent_decisions.insert().values(**record))
+
+    logger.debug(f"Decision record: {json.dumps(record)}")
 
 
 # CLI entry point
