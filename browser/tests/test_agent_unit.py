@@ -176,11 +176,12 @@ class TestGatingPolicy:
         policy = GatingPolicy()
 
         # Top-2 margin < 0.10 triggers escalation
+        # Use NAVIGATION_INTENT (not high-risk) to isolate ambiguity check
         should_escalate, reason = policy.should_escalate(
-            intent="PURCHASE_INTENT",
+            intent="NAVIGATION_INTENT",
             confidence=0.72,
             scores={
-                "PURCHASE_INTENT": 0.72,
+                "NAVIGATION_INTENT": 0.72,
                 "RESEARCH_INTENT": 0.68  # Only 0.04 margin
             }
         )
