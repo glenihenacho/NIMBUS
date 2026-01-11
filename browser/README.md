@@ -59,7 +59,8 @@ Required environment variables:
 - `POSTGRES_URI`: PostgreSQL connection string
 - `VLLM_MISTRAL_URL`: vLLM endpoint for Mistral (http://localhost:8001)
 - `VLLM_DEEPSEEK_URL`: vLLM endpoint for DeepSeek (http://localhost:8002)
-- `PAT_MARKETPLACE_API_KEY`: API key for marketplace submission
+- `PAT_MARKETPLACE_API`: Marketplace API base URL
+- `PAT_MARKETPLACE_KEY`: API key for marketplace submission
 
 ## Usage
 

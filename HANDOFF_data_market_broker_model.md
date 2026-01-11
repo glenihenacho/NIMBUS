@@ -127,18 +127,23 @@ buySegment(segmentId):
 ```
 
 **Governance Function (Owner-only):**
-```
-updateBrokerContract(paramKey, paramValue):
-  // Can update:
-  ├─ brokerMargin: 0.25 (adjust global percentage)
-  ├─ brokerWallet: newAddress (transfer funds recipient)
-  ├─ usersPoolWallet: newAddress (update provider payout recipient)
-  ├─ phase: 1→2→3→4 (progress through phases)
-  └─ paused: true/false (emergency pause)
+```solidity
+updateBrokerContract(address newBrokerContractAddress):
+  // UUPS Upgrade Pattern - Replace entire implementation
+  ├─ Verify new contract address is valid
+  ├─ All state preserved via proxy pattern
+  ├─ Emit BrokerContractUpdated(oldAddress, newAddress)
+  └─ Only callable by Wyoming DAO LLC (owner)
 
-  // Emits event and updates immediately
-  // Only callable by broker/contract owner
+  // New implementation can include updated:
+  // - brokerMargin percentage
+  // - wallet addresses
+  // - phase progression logic
+  // - emergency pause mechanism
+  // - bug fixes, gas optimizations, new features
 ```
+
+**Note:** Provider earnings are held in contract and withdrawn directly by users (no usersPoolWallet).
 
 **Why this matters:**
 - **No waiting period** – Spread earned immediately on settlement
@@ -184,11 +189,9 @@ updateBrokerContract(paramKey, paramValue):
      - Calculates userPayout = ASK - brokerSpread
      - Transfers both amounts simultaneously + grants access rights
    - **No intermediate states:** All settle together or transaction reverts
-   - **Governance function:** `updateBrokerContract(paramKey, paramValue)`
-     - Update brokerMargin without redeployment
-     - Update wallet addresses (broker, user pool)
-     - Advance phase progression (1→2→3→4)
-     - Emergency pause mechanism
+   - **Governance:** `updateBrokerContract(newImpl)` - UUPS upgradeable proxy
+     - Deploy new implementation with updated parameters/logic
+     - All state preserved via proxy pattern
      - Owner-only callable (Wyoming DAO LLC)
    - Access rights registration (who owns rights to which segments, backed by smart contract)
    - Phase-gated derivative enablement (Phase 3+ requires governance call)

@@ -10,13 +10,12 @@ describe("DataMarketplace", function () {
   let broker: SignerWithAddress;
   let provider: SignerWithAddress;
   let consumer: SignerWithAddress;
-  let usersPool: SignerWithAddress;
 
   const BROKER_MARGIN_BPS = 3000; // 30%
   const SEGMENT_PRICE = ethers.parseEther("100"); // 100 PAT
 
   beforeEach(async function () {
-    [owner, broker, provider, consumer, usersPool] = await ethers.getSigners();
+    [owner, broker, provider, consumer] = await ethers.getSigners();
 
     // Deploy PAT token
     const PATFactory = await ethers.getContractFactory("PAT");
@@ -24,10 +23,11 @@ describe("DataMarketplace", function () {
     await pat.waitForDeployment();
 
     // Deploy DataMarketplace as upgradeable proxy
+    // Provider earnings held in contract, withdrawn directly by users
     const MarketplaceFactory = await ethers.getContractFactory("DataMarketplace");
     marketplace = await upgrades.deployProxy(
       MarketplaceFactory,
-      [await pat.getAddress(), broker.address, usersPool.address, BROKER_MARGIN_BPS],
+      [await pat.getAddress(), broker.address, BROKER_MARGIN_BPS],
       { kind: "uups" }
     ) as unknown as DataMarketplace;
     await marketplace.waitForDeployment();
@@ -39,7 +39,6 @@ describe("DataMarketplace", function () {
   describe("Deployment", function () {
     it("Should set correct initial configuration", async function () {
       expect(await marketplace.brokerWallet()).to.equal(broker.address);
-      expect(await marketplace.usersPoolWallet()).to.equal(usersPool.address);
       expect(await marketplace.brokerMarginBps()).to.equal(BROKER_MARGIN_BPS);
       expect(await marketplace.getPhaseString()).to.equal("UTILITY");
       expect(await marketplace.paused()).to.equal(false);
@@ -192,56 +191,7 @@ describe("DataMarketplace", function () {
     });
   });
 
-  describe("Admin Functions", function () {
-    it("Should update broker margin", async function () {
-      await marketplace.setBrokerMargin(2000);
-      expect(await marketplace.brokerMarginBps()).to.equal(2000);
-    });
-
-    it("Should reject margin > 50%", async function () {
-      await expect(
-        marketplace.setBrokerMargin(5001)
-      ).to.be.revertedWithCustomError(marketplace, "InvalidConfiguration");
-    });
-
-    it("Should update broker wallet", async function () {
-      await marketplace.setBrokerWallet(consumer.address);
-      expect(await marketplace.brokerWallet()).to.equal(consumer.address);
-    });
-
-    it("Should advance phase", async function () {
-      expect(await marketplace.getPhaseString()).to.equal("UTILITY");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("FORWARDS");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("SYNTHETICS");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("SPECULATION");
-
-      await expect(marketplace.advancePhase()).to.be.revertedWith("Already at final phase");
-    });
-
-    it("Should pause and unpause", async function () {
-      await marketplace.setPaused(true);
-      expect(await marketplace.paused()).to.equal(true);
-
-      await expect(
-        marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE)
-      ).to.be.revertedWithCustomError(marketplace, "MarketPaused");
-
-      await marketplace.setPaused(false);
-      await marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE);
-    });
-
-    it("Should reject non-owner admin calls", async function () {
-      await expect(
-        marketplace.connect(consumer).setBrokerMargin(2000)
-      ).to.be.revertedWithCustomError(marketplace, "OwnableUnauthorizedAccount");
-    });
-  });
+  // Note: Admin functions removed - all parameter changes require UUPS upgrade
 
   describe("Contract Upgrade (updateBrokerContract)", function () {
     it("Should allow owner to upgrade contract", async function () {
