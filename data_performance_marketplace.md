@@ -179,11 +179,12 @@ that splits payment to all three parties simultaneously:
 ```
 buySegment(segmentId):
   ├─ Consumer pays ASK (100 PAT)
-  ├─ Browser Users receive BID (70 PAT) ✓
-  ├─ Broker receives Spread (30 PAT) ✓
+  ├─ Provider earnings recorded (70 PAT) → userEarnings[provider] ✓
+  ├─ Broker receives Spread (30 PAT) → brokerWallet ✓
   └─ Consumer receives data access rights ✓
 
-All three parties settle atomically. Zero inventory risk.
+All parties settle atomically. Zero inventory risk.
+Provider calls withdrawEarnings() to claim accumulated PAT.
 ```
 
 **Key advantages over traditional brokerage:**
@@ -230,19 +231,23 @@ segmentId → {
 ```
 brokerMargin: 0.30        // Percentage of ASK kept by broker
 brokerWallet: 0x...       // Broker revenue recipient
-usersPoolWallet: 0x...    // Provider payout pool
 phase: 1                  // Current market phase (1-4)
+paused: false             // Emergency pause state
 ```
 
-**Governance Functions (owner-only):**
+**Provider Earnings (per-user tracking):**
+```
+userEarnings: mapping(address => uint256)  // Provider payout balance
+```
+
+**Governance Function (owner-only):**
 ```
 updateBrokerContract(address newImplementation)  // UUPS upgrade
-setBrokerMargin(uint256 newMarginBps)            // Adjust margin (max 50%)
-setBrokerWallet(address newWallet)               // Update revenue recipient
-setUsersPoolWallet(address newWallet)            // Update provider pool
-advancePhase()                                   // Progress 1→2→3→4
-setPaused(bool paused)                           // Emergency pause
 ```
+
+All parameter changes (margin, wallet, phase, pause) require deploying a new
+implementation via UUPS upgrade. This ensures governance transparency and
+prevents ad-hoc parameter manipulation.
 
 See `contracts/contracts/DataMarketplace.sol` for implementation.
 

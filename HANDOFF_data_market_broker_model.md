@@ -117,13 +117,14 @@ buySegment(segmentId):
   ├─ Read segment metadata (type, window, confidence, ASK)
   ├─ Read globalBrokerMargin (0.30)
   ├─ Calculate brokerSpread = ASK × brokerMargin = 30
-  ├─ Calculate userPayout = ASK - brokerSpread = 70
-  ├─ transfer(userPayout) → Browser Users Pool
+  ├─ Calculate providerPayout = ASK - brokerSpread = 70
+  ├─ userEarnings[provider] += providerPayout (recorded on-chain)
   ├─ transfer(brokerSpread) → Broker Wallet
   └─ grantAccess(consumer, segmentId)
 
   If ANY step fails → entire transaction reverts
   If ALL succeed → settlement is instant and irreversible
+  Provider calls withdrawEarnings() to claim accumulated PAT
 ```
 
 **Governance Function (Owner-only):**
