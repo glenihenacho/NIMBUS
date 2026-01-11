@@ -127,14 +127,15 @@ Segments are created by AI analysis, not automatically.
 **Earnings accumulation:**
 ```
 Marketplace Smart Contract executes buySegment()
-  ├─ Sends 70 PAT (BID) → usersPoolWallet
-  ├─ Sends 30 PAT (spread) → brokerWallet
-  └─ Emits PayoutEvent(segmentId, amount)
+  ├─ Records 70 PAT (BID) → userEarnings[provider]
+  ├─ Transfers 30 PAT (spread) → brokerWallet
+  ├─ Grants access rights to consumer
+  └─ Emits PayoutRecorded(provider, amount)
 
 Smart contract tracks per-user earnings in mapping:
   mapping(address => uint256) userEarnings
 
-Browser listens for PayoutEvent
+Browser listens for PayoutRecorded event
   → Update UI: "Your data earned 15 PAT"
   → Add to balance: total earned = 15 PAT
 ```
@@ -208,9 +209,10 @@ UI updates: "Earnings: 0 PAT"
    - User sees notification: "New segment created: PURCHASE_INTENT (7D, 0.75)"
 5. Consumer purchases segment on marketplace
 6. Smart contract settles atomically:
-   - 70 PAT → usersPoolWallet
-   - 30 PAT → brokerWallet (your spread)
-7. Browser listens for PayoutEvent
+   - 70 PAT recorded → userEarnings[provider]
+   - 30 PAT transferred → brokerWallet (your spread)
+   - Access rights granted to consumer
+7. Browser listens for PayoutRecorded event
    - Notification: "Your data earned 15 PAT"
    - Earnings balance increases: 15 PAT
 8. Every night at 2 AM UTC:
