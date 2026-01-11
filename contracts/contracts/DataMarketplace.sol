@@ -104,12 +104,8 @@ contract DataMarketplace is
         uint256 timestamp
     );
 
-    event ConfigUpdated(bytes32 indexed paramKey, uint256 value);
-    event WalletUpdated(bytes32 indexed paramKey, address wallet);
-    event PhaseAdvanced(uint8 newPhase);
-    event MarketPaused(bool paused);
-
     // Contract upgrade event (per HANDOFF spec)
+    // All parameter changes (margin, wallet, phase, pause) require UUPS upgrade
     event BrokerContractUpdated(address indexed oldAddress, address indexed newAddress);
 
     // Errors
@@ -117,12 +113,7 @@ contract DataMarketplace is
     error SegmentNotActive();
     error AlreadyHasAccess();
     error InsufficientAllowance();
-    error InvalidConfiguration();
     error InsufficientEarnings();
-
-    // Event keys (gas-optimized)
-    bytes32 private constant KEY_BROKER_MARGIN = "brokerMargin";
-    bytes32 private constant KEY_BROKER_WALLET = "brokerWallet";
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -315,32 +306,8 @@ contract DataMarketplace is
         return userEarnings[user];
     }
 
-    // ============ Admin Functions (for parameter updates between upgrades) ============
-
-    function setBrokerMargin(uint256 newMarginBps) external onlyOwner {
-        if (newMarginBps > 5000) revert InvalidConfiguration();
-        brokerMarginBps = newMarginBps;
-        emit ConfigUpdated(KEY_BROKER_MARGIN, newMarginBps);
-    }
-
-    function setBrokerWallet(address newWallet) external onlyOwner {
-        require(newWallet != address(0), "Invalid address");
-        brokerWallet = newWallet;
-        emit WalletUpdated(KEY_BROKER_WALLET, newWallet);
-    }
-
-    function advancePhase() external onlyOwner {
-        require(currentPhase != Phase.SPECULATION, "Already at final phase");
-        currentPhase = Phase(uint8(currentPhase) + 1);
-        emit PhaseAdvanced(uint8(currentPhase));
-    }
-
-    function setPaused(bool _paused) external onlyOwner {
-        paused = _paused;
-        emit MarketPaused(_paused);
-    }
-
     // ============ View Functions ============
+    // Note: All parameter changes (margin, wallet, phase, pause) require UUPS upgrade
 
     function getPhaseString() external view returns (string memory) {
         if (currentPhase == Phase.UTILITY) return "UTILITY";

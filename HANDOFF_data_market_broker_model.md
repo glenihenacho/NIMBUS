@@ -128,27 +128,22 @@ buySegment(segmentId):
 
 **Governance Function (Owner-only):**
 ```solidity
-// UUPS Upgrade Pattern - Replace entire implementation
 updateBrokerContract(address newBrokerContractAddress):
-  // Atomically migrate to new broker contract implementation
+  // UUPS Upgrade Pattern - Replace entire implementation
   ├─ Verify new contract address is valid
   ├─ All state preserved via proxy pattern
   ├─ Emit BrokerContractUpdated(oldAddress, newAddress)
   └─ Only callable by Wyoming DAO LLC (owner)
 
-// Individual Parameter Setters (no upgrade needed)
-setBrokerMargin(uint256 newMarginBps):  // Adjust 30% → 25%
-setBrokerWallet(address newWallet):     // Update broker recipient
-advancePhase():                         // Progress 1→2→3→4
-setPaused(bool paused):                 // Emergency pause
+  // New implementation can include updated:
+  // - brokerMargin percentage
+  // - wallet addresses
+  // - phase progression logic
+  // - emergency pause mechanism
+  // - bug fixes, gas optimizations, new features
 ```
 
 **Note:** Provider earnings are held in contract and withdrawn directly by users (no usersPoolWallet).
-
-**Broker contract can be upgraded to:**
-- Fix bugs or optimize gas
-- Add new features (call/put issuance, etc.)
-- Change core settlement logic if needed
 
 **Why this matters:**
 - **No waiting period** – Spread earned immediately on settlement
@@ -194,13 +189,10 @@ setPaused(bool paused):                 // Emergency pause
      - Calculates userPayout = ASK - brokerSpread
      - Transfers both amounts simultaneously + grants access rights
    - **No intermediate states:** All settle together or transaction reverts
-   - **Governance:** UUPS upgradeable proxy + individual parameter setters
-     - `updateBrokerContract(newImpl)` - Full implementation upgrade via UUPS
-     - `setBrokerMargin(bps)` - Update margin without upgrade
-     - `setBrokerWallet(addr)` - Update broker recipient
-     - `advancePhase()` - Progress 1→2→3→4
-     - `setPaused(bool)` - Emergency pause
-     - All owner-only callable (Wyoming DAO LLC)
+   - **Governance:** `updateBrokerContract(newImpl)` - UUPS upgradeable proxy
+     - Deploy new implementation with updated parameters/logic
+     - All state preserved via proxy pattern
+     - Owner-only callable (Wyoming DAO LLC)
    - Access rights registration (who owns rights to which segments, backed by smart contract)
    - Phase-gated derivative enablement (Phase 3+ requires governance call)
 

@@ -191,56 +191,7 @@ describe("DataMarketplace", function () {
     });
   });
 
-  describe("Admin Functions", function () {
-    it("Should update broker margin", async function () {
-      await marketplace.setBrokerMargin(2000);
-      expect(await marketplace.brokerMarginBps()).to.equal(2000);
-    });
-
-    it("Should reject margin > 50%", async function () {
-      await expect(
-        marketplace.setBrokerMargin(5001)
-      ).to.be.revertedWithCustomError(marketplace, "InvalidConfiguration");
-    });
-
-    it("Should update broker wallet", async function () {
-      await marketplace.setBrokerWallet(consumer.address);
-      expect(await marketplace.brokerWallet()).to.equal(consumer.address);
-    });
-
-    it("Should advance phase", async function () {
-      expect(await marketplace.getPhaseString()).to.equal("UTILITY");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("FORWARDS");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("SYNTHETICS");
-
-      await marketplace.advancePhase();
-      expect(await marketplace.getPhaseString()).to.equal("SPECULATION");
-
-      await expect(marketplace.advancePhase()).to.be.revertedWith("Already at final phase");
-    });
-
-    it("Should pause and unpause", async function () {
-      await marketplace.setPaused(true);
-      expect(await marketplace.paused()).to.equal(true);
-
-      await expect(
-        marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE)
-      ).to.be.revertedWithCustomError(marketplace, "MarketPaused");
-
-      await marketplace.setPaused(false);
-      await marketplace.connect(provider).createSegment(0, 7, 7500, SEGMENT_PRICE);
-    });
-
-    it("Should reject non-owner admin calls", async function () {
-      await expect(
-        marketplace.connect(consumer).setBrokerMargin(2000)
-      ).to.be.revertedWithCustomError(marketplace, "OwnableUnauthorizedAccount");
-    });
-  });
+  // Note: Admin functions removed - all parameter changes require UUPS upgrade
 
   describe("Contract Upgrade (updateBrokerContract)", function () {
     it("Should allow owner to upgrade contract", async function () {
