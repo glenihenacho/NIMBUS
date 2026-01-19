@@ -7,7 +7,7 @@ Backend pipeline for detecting web browsing intent signals and creating monetiza
 ## Overview
 
 This pipeline processes raw browsing events (from Ungoogled-Chromium browser) through a hybrid intent detection system:
-- **Cheap classifier**: Rasa Pro + Mistral-small (via vLLM)
+- **Cheap classifier**: Rasa Open Source + Mistral-small (via vLLM)
 - **Escalation**: DeepSeek reasoning (gated, expensive)
 - **Output**: Structured intent signals → data segments → marketplace
 
@@ -26,7 +26,7 @@ This pipeline processes raw browsing events (from Ungoogled-Chromium browser) th
 
 - **Ingestion**: RudderStack (self-hosted data plane)
 - **Storage**: BigQuery (raw events) + Postgres (operational)
-- **Cheap Classifier**: Rasa Pro + Mistral-small (vLLM)
+- **Cheap Classifier**: Rasa Open Source + Mistral-small (vLLM)
 - **Escalation**: DeepSeek reasoning (vLLM, gated)
 - **Serving**: FastAPI router (single inference entry point)
 - **Monitoring**: Prometheus + Grafana + OpenSearch
@@ -54,12 +54,13 @@ cp .env.example .env
 ```
 
 Required environment variables:
-- `RUDDERSTACK_API_KEY`: RudderStack write key
+- `RUDDERSTACK_WRITE_KEY`: RudderStack write key
 - `BIGQUERY_PROJECT_ID`: GCP BigQuery project
 - `POSTGRES_URI`: PostgreSQL connection string
 - `VLLM_MISTRAL_URL`: vLLM endpoint for Mistral (http://localhost:8001)
 - `VLLM_DEEPSEEK_URL`: vLLM endpoint for DeepSeek (http://localhost:8002)
-- `PAT_MARKETPLACE_API_KEY`: API key for marketplace submission
+- `PAT_MARKETPLACE_API`: Marketplace API base URL
+- `PAT_MARKETPLACE_KEY`: API key for marketplace submission
 
 ## Usage
 
@@ -135,7 +136,7 @@ Example segment ID: `PURCHASE_INTENT|7D|0.70-0.85`
 ┌──────────────────────────────────┐
 │  FastAPI Router (Inference)      │
 ├──────────────────────────────────┤
-│ ├─ Rasa Pro (cheap classifier)  │
+│ ├─ Rasa Open Source (classifier) │
 │ ├─ Mistral-small (vLLM, scorer) │
 │ ├─ Gating policy (escalate?)     │
 │ └─ DeepSeek (vLLM, long-chain)  │

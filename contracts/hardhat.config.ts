@@ -3,6 +3,7 @@ import "@matterlabs/hardhat-zksync-solc";
 import "@matterlabs/hardhat-zksync-deploy";
 import "@matterlabs/hardhat-zksync-verify";
 import "@nomicfoundation/hardhat-toolbox";
+import "@openzeppelin/hardhat-upgrades";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -18,10 +19,10 @@ const config: HardhatUserConfig = {
     },
   },
   zksolc: {
-    version: "1.3.22",
+    version: "1.5.0",
     settings: {},
   },
-  defaultNetwork: "zkSyncTestnet",
+  defaultNetwork: "hardhat",
   networks: {
     hardhat: {
       zksync: false,

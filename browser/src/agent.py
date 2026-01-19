@@ -1,31 +1,45 @@
 """
-PAT AI Browser Agent - Powered by Qwen
+PAT Browser Agent - Hybrid Intent Detection
 
-This agent autonomously browses the web to extract web browsing intent signals
-that are packaged as data segments for the PAT marketplace.
+Collects browser events using canonical schema (v1) and extracts
+intent signals via Rasa + Mistral + DeepSeek pipeline.
 """
 
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional
-from playwright.async_api import async_playwright, Page, Browser
+from playwright.async_api import async_playwright, Browser
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+from .llm_clients import MistralClient, DeepSeekClient, GatingPolicy
+from .schema import EventType, BrowserEvent, IntentInference, Context, Privacy
+
 logger = logging.getLogger(__name__)
 
 
 class IntentType(Enum):
-    """Types of browsing intent signals"""
+    """
+    Intent signal types - aligned with DataMarketplace.SegmentType
+
+    Maps to smart contract enum:
+    0 = PURCHASE_INTENT
+    1 = RESEARCH_INTENT
+    2 = COMPARISON_INTENT
+    3 = ENGAGEMENT_INTENT
+    4 = NAVIGATION_INTENT
+    """
     PURCHASE_INTENT = "PURCHASE_INTENT"
     RESEARCH_INTENT = "RESEARCH_INTENT"
     COMPARISON_INTENT = "COMPARISON_INTENT"
     ENGAGEMENT_INTENT = "ENGAGEMENT_INTENT"
     NAVIGATION_INTENT = "NAVIGATION_INTENT"
+
+    def to_contract_id(self) -> int:
+        """Map to smart contract SegmentType enum index"""
+        return list(IntentType).index(self)
 
 
 @dataclass
@@ -84,75 +98,28 @@ class DataSegment:
         }
 
 
-class QwenClient:
-    """
-    Client for Qwen LLM API
-
-    In production, this would connect to Qwen's API.
-    For the prototype, we simulate intent detection.
-    """
-
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
-        logger.info("Initialized Qwen client")
-
-    async def analyze_page(self, page_content: str, url: str) -> list[IntentSignal]:
-        """
-        Analyze page content to detect intent signals
-
-        In production, this sends the content to Qwen for analysis.
-        The model identifies:
-        - Purchase intent (product pages, cart, checkout)
-        - Research intent (comparison pages, reviews)
-        - Engagement signals (time on page, scroll depth)
-        """
-        signals = []
-
-        # Simulate Qwen analysis (in production, call Qwen API)
-        # Detection heuristics based on URL patterns and content
-
-        if any(kw in url.lower() for kw in ["product", "buy", "shop", "cart"]):
-            signals.append(IntentSignal(
-                type=IntentType.PURCHASE_INTENT,
-                confidence=0.85,
-                url=url,
-                timestamp=datetime.utcnow(),
-                metadata={"source": "url_pattern", "keywords": ["product", "buy"]}
-            ))
-
-        if any(kw in url.lower() for kw in ["compare", "review", "vs"]):
-            signals.append(IntentSignal(
-                type=IntentType.COMPARISON_INTENT,
-                confidence=0.75,
-                url=url,
-                timestamp=datetime.utcnow(),
-                metadata={"source": "url_pattern", "keywords": ["compare", "review"]}
-            ))
-
-        if any(kw in url.lower() for kw in ["article", "blog", "learn", "guide"]):
-            signals.append(IntentSignal(
-                type=IntentType.RESEARCH_INTENT,
-                confidence=0.70,
-                url=url,
-                timestamp=datetime.utcnow(),
-                metadata={"source": "url_pattern", "keywords": ["article", "learn"]}
-            ))
-
-        return signals
-
-
 class BrowserAgent:
     """
-    AI Browser Agent for collecting web browsing intent signals
+    Browser Agent for collecting web browsing intent signals
 
-    Uses Playwright for browser automation and Qwen for intent analysis.
+    Uses Playwright for browser automation and hybrid Mistral+DeepSeek
+    for intent analysis. Collects raw events using canonical schema (v1).
     """
 
-    def __init__(self, qwen_client: QwenClient):
-        self.qwen = qwen_client
+    def __init__(
+        self,
+        mistral_client: Optional[MistralClient] = None,
+        deepseek_client: Optional[DeepSeekClient] = None,
+        gating_policy: Optional[GatingPolicy] = None
+    ):
+        self.mistral = mistral_client or MistralClient()
+        self.deepseek = deepseek_client or DeepSeekClient()
+        self.gating = gating_policy or GatingPolicy()
         self.browser: Optional[Browser] = None
         self.collected_signals: list[IntentSignal] = []
-        logger.info("Initialized Browser Agent")
+        self.raw_events: list[BrowserEvent] = []
+        self.inferences: list[IntentInference] = []
+        logger.info("Initialized Browser Agent (Mistral + DeepSeek)")
 
     async def start(self, headless: bool = True):
         """Start the browser"""
@@ -161,14 +128,73 @@ class BrowserAgent:
         logger.info(f"Browser started (headless={headless})")
 
     async def stop(self):
-        """Stop the browser"""
+        """Stop the browser and cleanup clients"""
         if self.browser:
             await self.browser.close()
-            logger.info("Browser stopped")
+        await self.mistral.close()
+        await self.deepseek.close()
+        logger.info("Browser stopped")
+
+    def _create_page_event(self, url: str, title: str) -> BrowserEvent:
+        """Create canonical PAGE_VIEW event"""
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        now = datetime.utcnow()
+
+        return BrowserEvent(
+            event_type=EventType.PAGE_VIEW,
+            event_time=now,
+            context=Context(
+                url_domain=parsed.netloc,
+                url_path=parsed.path,
+                viewport_width=1920,
+                viewport_height=1080,
+                device_type="desktop",
+                country="US",
+                hour_of_day=now.hour,
+                day_of_week=now.weekday(),
+                is_business_hours=9 <= now.hour <= 17
+            ),
+            payload={"title": title, "url": url},
+            privacy=Privacy(consent_monetization=True, data_sale_opt_in=True)
+        )
+
+    async def _analyze_events(self, events: list[dict]) -> tuple[str, float, str]:
+        """
+        Analyze events using hybrid Mistral + DeepSeek pipeline.
+
+        Returns: (intent_type, confidence, model_used)
+        """
+        # Step 1: Cheap classification (Mistral)
+        cheap_result = await self.mistral.score_intent(events)
+        top_intent = cheap_result.get("top_intent", "NAVIGATION_INTENT")
+        confidence = cheap_result.get("confidence", 0.5)
+        scores = cheap_result.get("scores", {})
+
+        # Step 2: Gating policy - escalate if uncertain
+        should_escalate, reason = self.gating.should_escalate(
+            intent=top_intent,
+            confidence=confidence,
+            scores=scores
+        )
+
+        # Step 3: Escalate to DeepSeek if needed
+        if should_escalate:
+            logger.info(f"Escalating to DeepSeek: {reason}")
+            deep_result = await self.deepseek.reason(events, cheap_result)
+            return (
+                deep_result.get("final_intent", top_intent),
+                deep_result.get("confidence", confidence),
+                "deepseek"
+            )
+
+        return top_intent, confidence, "mistral"
 
     async def navigate_and_analyze(self, url: str) -> list[IntentSignal]:
         """
         Navigate to a URL and analyze for intent signals
+
+        Creates canonical PAGE_VIEW event and stores intent inferences separately.
         """
         if not self.browser:
             raise RuntimeError("Browser not started. Call start() first.")
@@ -179,20 +205,47 @@ class BrowserAgent:
             logger.info(f"Navigating to: {url}")
             await page.goto(url, wait_until="networkidle", timeout=30000)
 
-            # Get page content for analysis
             content = await page.content()
             title = await page.title()
 
             logger.info(f"Page loaded: {title}")
 
-            # Analyze with Qwen
-            signals = await self.qwen.analyze_page(content, url)
+            # Create and store raw event (canonical schema)
+            event = self._create_page_event(url, title)
+            self.raw_events.append(event)
 
-            # Store collected signals
-            self.collected_signals.extend(signals)
+            # Prepare event bundle for analysis
+            event_bundle = [event.to_dict()]
 
-            logger.info(f"Detected {len(signals)} intent signals")
-            return signals
+            # Analyze with hybrid pipeline
+            intent_str, confidence, model = await self._analyze_events(event_bundle)
+
+            try:
+                intent_type = IntentType(intent_str)
+            except ValueError:
+                intent_type = IntentType.NAVIGATION_INTENT
+
+            # Create signal
+            signal = IntentSignal(
+                type=intent_type,
+                confidence=confidence,
+                url=url,
+                timestamp=datetime.utcnow(),
+                metadata={"model": model, "title": title}
+            )
+
+            # Store inference separately per canonical schema
+            self.inferences.append(IntentInference(
+                source_event_ids=[event.event_id],
+                model_id=model,
+                intent_type=intent_type.value,
+                confidence=confidence,
+                alternatives=[]
+            ))
+
+            self.collected_signals.append(signal)
+            logger.info(f"Detected {intent_type.value} ({confidence:.2f}) via {model}")
+            return [signal]
 
         except Exception as e:
             logger.error(f"Error analyzing {url}: {e}")
@@ -218,17 +271,13 @@ class BrowserAgent:
         confidence_min: float = 0.70,
         confidence_max: float = 0.85
     ) -> DataSegment:
-        """
-        Create a data segment from collected signals
-        """
-        # Filter signals by type and confidence
+        """Create a data segment from collected signals"""
         filtered_signals = [
             s for s in self.collected_signals
             if s.type == segment_type
             and confidence_min <= s.confidence <= confidence_max
         ]
 
-        # Filter by time window
         cutoff = datetime.utcnow() - timedelta(days=time_window_days)
         filtered_signals = [
             s for s in filtered_signals
@@ -252,7 +301,7 @@ class BrowserAgent:
         data = {
             "segments": [s.to_dict() for s in segments],
             "exported_at": datetime.utcnow().isoformat(),
-            "agent_version": "1.0.0"
+            "agent_version": "2.0.0"
         }
 
         with open(filepath, "w") as f:
@@ -260,32 +309,47 @@ class BrowserAgent:
 
         logger.info(f"Exported {len(segments)} segments to {filepath}")
 
+    def export_raw_events(self, filepath: str):
+        """
+        Export raw events and inferences per canonical schema
+
+        Separates raw events from intent inferences for:
+        - Model swapping without touching raw events
+        - Historical reprocessing
+        - GDPR/CCPA compliance via retention_tier
+        """
+        data = {
+            "events_raw": [e.to_dict() for e in self.raw_events],
+            "intent_inferences": [i.to_dict() for i in self.inferences],
+            "exported_at": datetime.utcnow().isoformat(),
+            "schema_version": "v1"
+        }
+
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=2)
+
+        logger.info(f"Exported {len(self.raw_events)} events, {len(self.inferences)} inferences to {filepath}")
+
 
 async def main():
     """Example usage of the browser agent"""
 
-    # Initialize components
-    qwen = QwenClient()
-    agent = BrowserAgent(qwen)
+    # Initialize with hybrid classifier
+    agent = BrowserAgent()
 
     try:
-        # Start browser
         await agent.start(headless=True)
 
-        # Example URLs to analyze
         urls = [
             "https://example.com/products/laptop",
             "https://example.com/compare/laptops",
             "https://example.com/blog/buying-guide",
         ]
 
-        # Browse and collect signals
         signals = await agent.browse_urls(urls)
         print(f"\nCollected {len(signals)} total signals")
 
-        # Create data segments
         segments = []
-
         for intent_type in IntentType:
             segment = agent.create_segment(
                 segment_type=intent_type,
@@ -296,10 +360,8 @@ async def main():
             if segment.signals:
                 segments.append(segment)
 
-        # Export for marketplace
         if segments:
             agent.export_segments(segments, "segments_output.json")
-
             print("\n=== Created Segments ===")
             for segment in segments:
                 print(f"  {segment.segment_id}: {len(segment.signals)} signals")

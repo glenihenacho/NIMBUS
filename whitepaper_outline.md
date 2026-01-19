@@ -10,7 +10,7 @@ This document provides a concise outline for an investor‑ and builder‑grade 
 | **Token** | PAT (ERC‑20, 555,222,888 supply) |
 | **Jurisdiction** | Wyoming DAO LLC |
 | **Data Type** | Web browsing intent signals |
-| **AI Engine** | Qwen LLM |
+| **AI Engine** | Rasa Open Source + Mistral + DeepSeek (hybrid) |
 | **Storage** | Centralized cloud (off‑chain) |
 
 ## 1. Abstract
@@ -65,7 +65,7 @@ All smart contracts are deployed on **zkSync Era** for low fees and high through
 **On‑chain components:** PAT token (ERC‑20), segment registry, market contracts,
 rewards distributor and staking/bonding mechanisms.
 
-**Off‑chain components:** Qwen‑powered AI browser for ingestion, scoring and
+**Off‑chain components:** Hybrid AI browser (Rasa + Mistral + DeepSeek) for ingestion, scoring and
 decay engines, centralized cloud storage, access enforcement and metadata indexing.
 
 Discuss governance and upgradability principles to ensure long‑term adaptability.

@@ -1,157 +1,433 @@
-# Intent Detection Pipeline – Architecture & Implementation Guide
+# PAT Browser – Chromium Fork for Data Monetization
 
-This document describes the design and implementation of the **intent detection pipeline** for PAT.
-
-**IMPORTANT:** See `HANDOFF_intent_detection_engine.md` for the complete, production-ready specification.
-
-The pipeline:
-1. Collects canonical browser events (from Ungoogled-Chromium browser)
-2. Routes through intent classifiers (Rasa + Mistral-small)
-3. Escalates uncertain cases to DeepSeek (reasoning model)
-4. Aggregates intents into monetizable data segments
-5. Submits segments to PAT marketplace
+This document describes the design and implementation of **PAT Browser**, a
+Chromium-based web browser that enables users to monetize their browsing data
+through the PAT marketplace. The browser passively ingests browsing behavior,
+uses a hybrid Rasa + Mistral + DeepSeek pipeline to identify intent signals,
+and creates tradeable data segments.
 
 ## Technical Specifications
 
 | Component | Technology |
 |-----------|------------|
-| **Ingestion** | RudderStack (self-hosted) |
-| **Storage** | BigQuery (raw) + Postgres (ops) |
-| **Cheap Classifier** | Rasa Pro + Mistral-small (vLLM) |
-| **Escalation** | DeepSeek reasoning (vLLM, gated) |
-| **Serving** | FastAPI router |
-| **Data Type** | Web browsing intent signals (canonical schema) |
-| **Output** | Data segments for PAT marketplace |
-| **Monitoring** | Prometheus + Grafana + OpenSearch |
+| **Base** | Ungoogled-Chromium (fork) |
+| **AI Engine** | Rasa Open Source + Mistral-small + DeepSeek (hybrid) |
+| **Data Collected** | URLs, time on page, scroll depth, clicks, search queries, form inputs |
+| **Privacy** | Incognito mode excludes all data collection |
+| **Output** | Intent signal data segments |
+| **Settlement** | PAT tokens on zkSync Era |
 
 ## 1. Concept & Motivation
 
-Traditional web browsers act as passive windows into the internet.  AI browser
-agents transform them into proactive, goal‑driven assistants.  According to
-LayerX, these agents integrate large language models (LLMs) directly into the
-browser so that user commands expressed in natural language are interpreted
-and broken down into sequences of web tasks.  The
-agent then autonomously navigates websites, interacts with forms and extracts
-data, mimicking human‑like browsing behaviour.
-This capability makes AI browser agents powerful tools for automating data
-collection, research and workflows.
+Users generate valuable browsing data every day but receive nothing in return.
+Advertisers and data brokers profit from this data while users bear the privacy
+costs. PAT Browser flips this model:
+
+- **User owns their data** – All browsing data stays local until the user
+  explicitly chooses to monetize it.
+- **Transparent collection** – Users see exactly what data is collected and can
+  opt out per-site or globally.
+- **Fair compensation** – Users earn PAT tokens when their data segments are
+  purchased on the marketplace.
+- **Privacy by default** – Incognito mode disables all data collection.
 
 ## 2. Architecture Overview
 
-The PAT intent detection pipeline consists of:
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         PAT Browser (Ungoogled-Chromium)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │   Chromium  │  │    Data     │  │   Intent    │  │    PAT Wallet &     │ │
+│  │   Renderer  │──│  Collector  │──│   Router    │──│  Marketplace Client │ │
+│  │             │  │             │  │ (FastAPI)   │  │                     │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+│         │               │               │                     │             │
+│         ▼               ▼               ▼                     ▼             │
+│  ┌─────────────────────────────────────────────────────────────────────────┐│
+│  │                        Local Encrypted Storage                          ││
+│  │  (Browsing data, intent signals, segments awaiting upload)              ││
+│  └─────────────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+                    ┌─────────────────────────────────┐
+                    │      PAT Marketplace API        │
+                    │      (zkSync Era Settlement)    │
+                    └─────────────────────────────────┘
+```
 
-1. **Event Collection (Ungoogled-Chromium)** – Browser collects raw browsing events
-   following canonical schema (page_view, scroll, click, text_input, etc.)
+### Core Components
 
-2. **Event Transport (RudderStack)** – Self-hosted data plane validates tracking plan,
-   enforces schema, routes events to BigQuery + Postgres
+1. **Chromium Renderer** – Ungoogled-Chromium rendering engine (no Google telemetry)
+   with hooks for data collection events.
 
-3. **Storage Layer** –
-   - **BigQuery**: Immutable append-only raw events (replayable)
-   - **Postgres**: Operational state (sessions, routing decisions)
+2. **Data Collector** – Native C++ component that captures browsing events:
+   - Page navigation (URL, timestamp, referrer)
+   - Time on page and engagement metrics
+   - Scroll depth and viewport interactions
+   - Click events (anonymized element selectors)
+   - Search queries (from search engine URLs)
+   - Form inputs (sanitized, no passwords/PII)
 
-4. **Intent Inference (FastAPI Router)** –
-   - **Cheap path**: Rasa Pro (deterministic) + Mistral-small (vLLM, semantic)
-   - **Gating policy**: Escalate if confidence < 0.70 (or high-risk/ambiguous)
-   - **Expensive path**: DeepSeek reasoning (vLLM, long-chain)
+3. **Intent Router (FastAPI)** – Hybrid inference pipeline:
+   - **Rasa Open Source** – Deterministic classifier for known intents
+   - **Mistral-small** – Semantic scorer via vLLM
+   - **DeepSeek** – Long-chain reasoning for ambiguous cases (gated)
+   - Gating policy escalates when confidence < 0.70
 
-5. **Output Generation** – Structured intent decisions (JSON) linked to source events
+4. **PAT Wallet & Marketplace Client** – Integrated wallet for:
+   - Managing PAT token balance
+   - Viewing pending/sold data segments
+   - Configuring monetization preferences
+   - Withdrawing earnings to external wallet
 
-6. **Segment Creation** – Aggregate intent decisions into monetizable segments
-   (type, window, confidence, ASK price)
+## 3. Data Collection Specification
 
-### Classifier Hybrid
+### Collected Data Points
 
-The intent detection uses a **hybrid classifier approach**:
+| Data Type | Description | Storage |
+|-----------|-------------|---------|
+| **URLs** | Full URL of visited pages | Local, hashed for segments |
+| **Time on Page** | Duration in seconds | Local |
+| **Scroll Depth** | Maximum scroll percentage | Local |
+| **Clicks** | Anonymized element type + position | Local |
+| **Search Queries** | Extracted from search engine URLs | Local |
+| **Form Inputs** | Field types only, no values (except search) | Local |
+| **Referrer Chain** | How user arrived at page | Local |
+| **Timestamps** | UTC timestamps for all events | Local |
 
-- **Rasa Pro** – Deterministic NLU for known intents (fast, stable, rule-based)
-- **Mistral-small** – Semantic classifier via vLLM (flexible, learns from context)
-- **DeepSeek** – Long-chain reasoning (expensive, gated, used for ambiguous cases)
+### Excluded Data (Never Collected)
 
-**Why hybrid:**
-- Rasa handles 90% of cases fast and cheap
-- Mistral adds semantic flexibility when Rasa confidence is borderline
-- DeepSeek provides reasoning for high-stakes decisions (high-value sessions, new intents)
-- Gating policy ensures cost-efficient escalation (only ~10% → DeepSeek)
+- Passwords and authentication tokens
+- Credit card numbers and financial data
+- Personal identifiable information (names, emails, addresses)
+- Private/Incognito browsing sessions
+- Sites on user's exclusion list
+- Healthcare and banking sites (default excluded)
 
-## 3. Practical Development Steps
+### Privacy Controls
 
-LayerX suggests the following process for building an AI browser agent:
+```
+┌─────────────────────────────────────────────────────┐
+│              PAT Browser Privacy Settings            │
+├─────────────────────────────────────────────────────┤
+│ ☑ Enable data collection (earn PAT tokens)          │
+│ ☑ Exclude Incognito mode                            │
+│ ☑ Exclude banking/financial sites                   │
+│ ☑ Exclude healthcare sites                          │
+│ ☐ Exclude social media                              │
+│                                                      │
+│ Site-specific exclusions:                           │
+│   [example.com] [Remove]                            │
+│   [private-site.org] [Remove]                       │
+│   [+ Add site]                                       │
+│                                                      │
+│ [View My Data] [Export Data] [Delete All Data]      │
+└─────────────────────────────────────────────────────┘
+```
 
-1. **Define the agent's purpose and scope** – The PAT agent collects **web
-   browsing intent signals** — user behavior patterns that indicate purchase
-   intent, research interests or engagement signals.
-2. **Design the agent's architecture** – Use a goal‑based agent with Qwen as
-   the reasoning engine and Playwright for browser automation.
-3. **Choose the right models and tools** – PAT uses **Qwen** (Alibaba's LLM)
-   for reasoning and **Playwright** for headless browser automation.  Qwen
-   provides strong multilingual capabilities and efficient inference.
-4. **Develop the perception and action modules** – Write code to parse web
-   pages (e.g. using BeautifulSoup or DOM APIs) and interact with them
-   programmatically.  In the PAT ecosystem, you could leverage the `browser`
-   and `computer` tools to perform these actions.
-5. **Train and test the agent** – Provide examples of tasks and validate that
-   the agent correctly executes them.  Use unit tests and simulated
-   environments to catch errors early.
-6. **Deployment and iteration** – Package the agent as a browser extension
-   or integrate it into the existing AI browser framework.  Collect feedback
-   from users, monitor performance and iterate.
+## 4. Intent Signal Detection
 
-## 4. Security Considerations
+The hybrid Rasa + Mistral + DeepSeek pipeline processes raw browsing events:
 
-AI browser agents can access sensitive information and perform actions on a
-user’s behalf.  LayerX warns that compromised agents could exfiltrate data
-or execute malicious actions.  To mitigate these
-risks:
+### Signal Types
 
-1. **Sandboxing** – Run the agent in an isolated context with minimal
-   privileges and restrict access to sensitive data.
-2. **Prompt injection protection** – Implement filtering to detect and ignore
-   malicious instructions embedded in web pages or prompts.
-3. **Monitoring & logging** – Log all actions taken by the agent and monitor
-   for anomalies.  Provide users with transparency about what the agent is
-   doing.
-4. **Access control** – Require explicit user consent for actions that may
-   have side effects (e.g. purchases, sign‑ins) and implement multi‑factor
-   authentication where possible.
-5. **Continuous updates** – Regularly update the agent to address newly
-   discovered vulnerabilities and integrate security patches.
+| Intent Type | Indicators | Confidence Factors |
+|-------------|------------|-------------------|
+| **PURCHASE_INTENT** | Product pages, cart, checkout, price comparisons | Time on page, return visits, click depth |
+| **RESEARCH_INTENT** | Articles, guides, documentation, tutorials | Scroll depth, time reading, bookmarks |
+| **COMPARISON_INTENT** | Review sites, "vs" searches, spec comparisons | Multiple product views, tab switches |
+| **ENGAGEMENT_INTENT** | Comments, shares, likes, form submissions | Interaction frequency, session length |
+| **NAVIGATION_INTENT** | Category browsing, search refinement | Click patterns, query modifications |
 
-## 5. Next Steps for Developers
+### Hybrid Classification Pipeline
 
-**See HANDOFF_intent_detection_engine.md for complete implementation spec.**
+```
+Events → Rasa Open Source (deterministic) → Mistral (semantic scorer) → Gating Policy
+                                                                      │
+                                        ┌─────────────────────────────┴───┐
+                                        │ If confidence < 0.70            │
+                                        │ If high-risk + conf < 0.85      │
+                                        │ If top-2 margin < 0.10          │
+                                        └─────────────────────────────────┘
+                                                      │
+                                                      ▼
+                                              DeepSeek (reasoning)
+                                                      │
+                                                      ▼
+                                              Final Intent Decision
+```
 
-### Implementation Roadmap
+### Segment Format
 
-1. **Deploy event pipeline**
-   - RudderStack (self-hosted data plane)
-   - BigQuery + Postgres
-   - Canonical event schema validation
+```json
+{
+  "segment_id": "PURCHASE_INTENT|7D|0.75-0.90",
+  "segment_type": "PURCHASE_INTENT",
+  "time_window_days": 7,
+  "confidence_range": { "min": 0.75, "max": 0.90 },
+  "signal_count": 847,
+  "categories": ["electronics", "laptops"],
+  "created_at": "2024-01-15T10:30:00Z",
+  "user_id_hash": "0x7f3a...",
+  "price_pat": 150.00
+}
+```
 
-2. **Deploy intent classifiers**
-   - Rasa Pro + Mistral-small (vLLM)
-   - DeepSeek (vLLM)
-   - Gating policy (escalation thresholds)
+## 5. Building from Source
 
-3. **Implement FastAPI router**
-   - Cheap classification endpoint
-   - Gating logic
-   - Async writes to BigQuery + Postgres
+### Prerequisites
 
-4. **Segment creation pipeline**
-   - Aggregate intents from decisions
-   - Filter for eligibility (5+ signals, conf ≥ 0.70)
-   - Submit to marketplace API
+- Linux (Ubuntu 20.04+ recommended) or macOS
+- 100GB+ free disk space
+- 16GB+ RAM (32GB recommended)
+- Python 3.8+
+- Git, curl, lsb_release
 
-5. **Monitoring & observability**
-   - Prometheus + Grafana dashboards
-   - OpenSearch audit trail
-   - Cost tracking per intent
+### Clone and Setup
 
-### Architecture References
+```bash
+# Install depot_tools
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+export PATH="$PATH:$(pwd)/depot_tools"
 
-- **Event schema**: See `HANDOFF_canonical_event_schema.md`
-- **Intent pipeline**: See `HANDOFF_intent_detection_engine.md`
-- **Broker model**: See `HANDOFF_data_market_broker_model.md`
-- **Smart contracts**: `contracts/` for PAT settlement on zkSync Era
-- **User browser**: See `HANDOFF_user_browser_architecture.md`
+# Create working directory
+mkdir pat-browser && cd pat-browser
+
+# Fetch Ungoogled-Chromium source
+fetch --nohooks chromium
+cd src
+
+# Checkout stable branch
+git checkout tags/120.0.6099.109 -b pat-browser
+
+# Apply PAT Browser patches
+git apply ../patches/pat-data-collector.patch
+git apply ../patches/pat-intent-router.patch
+git apply ../patches/pat-wallet-ui.patch
+
+# Install dependencies
+gclient sync
+./build/install-build-deps.sh
+
+# Configure build
+gn gen out/Release --args='
+  is_official_build=true
+  is_debug=false
+  target_cpu="x64"
+  proprietary_codecs=true
+  ffmpeg_branding="Chrome"
+  enable_pat_data_collection=true
+  pat_inference_endpoint="http://localhost:8000/api/infer/intent"
+'
+
+# Build (takes 2-6 hours depending on hardware)
+autoninja -C out/Release chrome
+```
+
+### Build Outputs
+
+```
+out/Release/
+├── chrome                    # Main browser executable
+├── chrome_sandbox            # Sandbox helper
+├── libpat_collector.so       # Data collection library
+├── libpat_inference.so       # Intent router client library
+├── resources/
+│   └── pat_wallet/           # Wallet UI resources
+└── locales/                  # Localization files
+```
+
+## 6. Project Structure
+
+```
+browser/
+├── patches/
+│   ├── pat-data-collector.patch    # Chromium patches for data collection
+│   ├── pat-intent-router.patch     # FastAPI inference integration
+│   └── pat-wallet-ui.patch         # Wallet and settings UI
+├── src/
+│   ├── collector/
+│   │   ├── browsing_data_collector.cc
+│   │   ├── browsing_data_collector.h
+│   │   ├── event_types.h
+│   │   └── privacy_filter.cc
+│   ├── inference/
+│   │   ├── intent_analyzer.cc
+│   │   ├── intent_analyzer.h
+│   │   ├── mistral_client.cc
+│   │   └── segment_builder.cc
+│   ├── wallet/
+│   │   ├── pat_wallet_controller.cc
+│   │   ├── marketplace_client.cc
+│   │   └── ui/
+│   │       ├── wallet_page.html
+│   │       ├── settings_page.html
+│   │       └── data_viewer.html
+│   └── storage/
+│       ├── encrypted_store.cc
+│       └── segment_cache.cc
+├── tests/
+│   ├── collector_test.cc
+│   ├── intent_analyzer_test.cc
+│   └── privacy_filter_test.cc
+└── BUILD.gn
+```
+
+## 7. Native Components
+
+### Data Collector (C++)
+
+```cpp
+// browsing_data_collector.h
+namespace pat {
+
+struct BrowsingEvent {
+  enum Type {
+    PAGE_LOAD,
+    PAGE_UNLOAD,
+    SCROLL,
+    CLICK,
+    FORM_SUBMIT,
+    SEARCH_QUERY
+  };
+
+  Type type;
+  std::string url_hash;
+  base::Time timestamp;
+  base::TimeDelta duration;
+  double scroll_depth;
+  std::string element_type;
+  std::string search_query;  // Only for SEARCH_QUERY type
+};
+
+class BrowsingDataCollector {
+ public:
+  static BrowsingDataCollector* GetInstance();
+
+  void OnPageLoad(const GURL& url, content::WebContents* contents);
+  void OnPageUnload(const GURL& url, base::TimeDelta time_on_page);
+  void OnScroll(double depth_percentage);
+  void OnClick(const std::string& element_selector);
+  void OnSearchQuery(const std::string& query);
+
+  bool IsCollectionEnabled() const;
+  bool IsIncognito(content::WebContents* contents) const;
+  bool IsExcludedSite(const GURL& url) const;
+
+ private:
+  std::unique_ptr<PrivacyFilter> privacy_filter_;
+  std::unique_ptr<EncryptedStore> local_store_;
+};
+
+}  // namespace pat
+```
+
+### Intent Analyzer (FastAPI Router Client)
+
+```cpp
+// intent_analyzer.h
+namespace pat {
+
+enum class IntentType {
+  PURCHASE_INTENT,
+  RESEARCH_INTENT,
+  COMPARISON_INTENT,
+  ENGAGEMENT_INTENT,
+  NAVIGATION_INTENT
+};
+
+struct IntentSignal {
+  IntentType type;
+  double confidence;
+  std::vector<std::string> categories;
+  base::Time detected_at;
+  std::string model_used;  // "mistral" or "deepseek"
+};
+
+class IntentAnalyzer {
+ public:
+  explicit IntentAnalyzer(const std::string& router_endpoint);
+
+  // Analyze recent browsing events and detect intent signals
+  std::vector<IntentSignal> AnalyzeEvents(
+      const std::vector<BrowsingEvent>& events);
+
+  // Build a data segment from detected signals
+  DataSegment BuildSegment(
+      const std::vector<IntentSignal>& signals,
+      int time_window_days,
+      double confidence_min,
+      double confidence_max);
+
+ private:
+  std::string router_endpoint_;
+  std::unique_ptr<HttpClient> http_client_;
+};
+
+}  // namespace pat
+```
+
+## 8. Security Considerations
+
+### Data Protection
+
+1. **Local Encryption** – All browsing data encrypted at rest using AES-256-GCM
+   with a key derived from user's PAT wallet password.
+
+2. **Minimal Data Transmission** – Only aggregated segments are uploaded to
+   the marketplace, never raw browsing history.
+
+3. **Hash-based Anonymization** – URLs and identifiers are hashed before
+   segment creation; original values never leave the device.
+
+4. **Secure Inference** – Intent router runs locally or via TLS 1.3 with
+   certificate pinning.
+
+### User Controls
+
+1. **Granular Opt-out** – Per-site, per-category, or global data collection
+   toggle.
+
+2. **Data Viewer** – Built-in UI to see all collected data before any upload.
+
+3. **Delete Anytime** – One-click deletion of all local data.
+
+4. **Export** – Download all data in machine-readable format (JSON).
+
+## 9. Development Roadmap
+
+### Phase 1: Foundation
+- [x] Set up Ungoogled-Chromium build environment
+- [x] Implement basic data collector hooks
+- [x] Create local encrypted storage
+- [x] Build privacy filter and exclusion system
+
+### Phase 2: AI Integration
+- [x] Implement FastAPI intent router
+- [x] Integrate Mistral + DeepSeek via vLLM
+- [x] Implement gating policy for escalation
+- [x] Build segment creation pipeline
+
+### Phase 3: Marketplace Integration
+- [ ] Implement PAT wallet UI
+- [ ] Build marketplace API client
+- [ ] Add segment upload and pricing
+- [ ] Integrate zkSync Era for settlements
+
+### Phase 4: Polish & Launch
+- [ ] Security audit
+- [ ] Performance optimization
+- [ ] Cross-platform builds (Linux, macOS, Windows)
+- [ ] Beta release
+
+## 10. Next Steps
+
+1. **Set up build environment** – Install depot_tools and fetch Ungoogled-Chromium
+2. **Create initial patches** – Hook into Chromium's navigation and event system
+3. **Implement data collector** – Start with URL and time-on-page tracking
+4. **Build privacy filter** – Implement incognito detection and site exclusions
+5. **Deploy intent router** – Run FastAPI with vLLM (Mistral + DeepSeek)
+
+See `contracts/` for the PAT token smart contract implementation.
