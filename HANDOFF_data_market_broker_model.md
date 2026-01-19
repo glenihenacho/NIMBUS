@@ -194,6 +194,7 @@ updateBrokerContract(address newBrokerContractAddress):
      - Deploy new implementation with updated parameters/logic
      - All state preserved via proxy pattern
      - Owner-only callable (Wyoming DAO LLC)
+     - Emits `BrokerContractUpdated(oldAddress, newAddress)` event
    - Access rights registration (who owns rights to which segments, backed by smart contract)
    - Phase-gated derivative enablement (Phase 3+ requires governance call)
 
